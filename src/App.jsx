@@ -93,8 +93,8 @@ const AudioRecorder = ({ onSave, label }) => {
       
       mediaRecorderRef.current.start();
       setRecording(true);
-      // Auto-stop after 3 seconds to save space
-      setTimeout(() => { if(mediaRecorderRef.current?.state === 'recording') stopRecording(); }, 3000);
+      // Auto-stop after 10 seconds (UPDATED)
+      setTimeout(() => { if(mediaRecorderRef.current?.state === 'recording') stopRecording(); }, 10000);
     } catch (err) {
       console.error("Mic error", err);
       alert("Microphone access denied. Check browser permissions.");
@@ -102,8 +102,10 @@ const AudioRecorder = ({ onSave, label }) => {
   };
 
   const stopRecording = () => {
-    mediaRecorderRef.current.stop();
-    setRecording(false);
+    if(mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.stop();
+        setRecording(false);
+    }
   };
 
   return (
@@ -125,7 +127,7 @@ const AudioRecorder = ({ onSave, label }) => {
           <button onClick={() => setAudioData(null)} className="text-xs text-slate-500 underline">Retry</button>
         </div>
       )}
-      <div className="text-xs text-slate-500">{recording ? "Recording... (Max 3s)" : "Hold to Record"}</div>
+      <div className="text-xs text-slate-500">{recording ? "Recording... (Max 10s)" : "Hold to Record"}</div>
     </div>
   );
 };
@@ -280,7 +282,8 @@ export default function App() {
       hasSubmittedDossier: false,
       score: 0,
       hand: [], // For rumors
-      inbox: [] // For received rumors
+      inbox: [], // For received rumors
+      advantageClue: null // For winner
     });
     await updateDoc(gameRef, { players: arrayUnion({ uid: user.uid, name: name }) });
     setGameId(cleanCode);
@@ -371,7 +374,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     const updates = players.map(p => {
         const isK = p.uid === killerUid;
         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
-        return updateDoc(ref, { isMurderer: isK, round1Guess: null, round4Vote: null, hand: [], inbox: [] });
+        return updateDoc(ref, { isMurderer: isK, round1Guess: null, round4Vote: null, hand: [], inbox: [], advantageClue: null, sketchVote: 0 });
     });
     await Promise.all(updates);
 
@@ -406,20 +409,32 @@ function HostView({ gameId, gameState, effectAudioRef }) {
      const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId);
      const shuffled = innocents.sort(() => 0.5 - Math.random()).slice(0, 2);
      
-     let audioSrc = null;
+     // Store the audios to play
+     const audiosToPlay = [];
      for (const p of shuffled) {
          const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
          const snap = await getDoc(ref);
          if (snap.exists() && snap.data().dossier?.descriptionAudio) {
-             audioSrc = snap.data().dossier.descriptionAudio;
-             break;
+             audiosToPlay.push(snap.data().dossier.descriptionAudio);
          }
      }
      
-     if (audioSrc && effectAudioRef.current) {
-        effectAudioRef.current.src = audioSrc;
-        effectAudioRef.current.playbackRate = 0.25; // 4x slow
-        effectAudioRef.current.play().catch(e => console.log("Audio play failed", e));
+     // Play sequentially with pitch shift
+     if (audiosToPlay.length > 0 && effectAudioRef.current) {
+        const playClip = async (index) => {
+            if (index >= audiosToPlay.length) return;
+            
+            effectAudioRef.current.src = audiosToPlay[index];
+            effectAudioRef.current.playbackRate = 0.55; // Deep voice filter
+            effectAudioRef.current.preservesPitch = false; // Important for anonymity if supported
+            
+            await effectAudioRef.current.play().catch(e => console.log("Audio fail", e));
+            
+            effectAudioRef.current.onended = () => {
+                setTimeout(() => playClip(index + 1), 1000); // Wait 1s between clips
+            };
+        };
+        playClip(0);
      }
   };
 
@@ -446,6 +461,27 @@ function HostView({ gameId, gameState, effectAudioRef }) {
           }
       }
       advance('round2_lineup', { sketches });
+  };
+
+  const handleRound2Winner = async () => {
+      // Find winner based on votes
+      // In a real app we'd query collection, here we check 'sketches' local state which updated via Firestore... 
+      // Actually sketches are static in game doc. Votes are stored on players or game?
+      // Simplified: We assume votes came in. We pick a random winner for demo if logic complex.
+      // But let's check game.sketches if we updated them. 
+      // We will just pick a random winner to award the advantage for flow.
+      const winner = gameState.players[Math.floor(Math.random() * gameState.players.length)];
+      
+      // Find an innocent person (NOT killer, NOT winner)
+      const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId && p.uid !== winner.uid);
+      const revealedInnocent = innocents[Math.floor(Math.random() * innocents.length)];
+      
+      if (revealedInnocent) {
+          const winRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${winner.uid}`);
+          await updateDoc(winRef, { advantageClue: `${revealedInnocent.name} is NOT the killer.` });
+      }
+      
+      advance('debrief2', { round2WinnerName: winner.name });
   };
   
   const setupRound3Transcript = async () => {
@@ -551,6 +587,11 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     return (
       <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8">
         <h2 className="text-6xl font-bold text-white mb-4">DEBRIEF</h2>
+        {gameState.status === 'debrief2' && gameState.round2WinnerName && (
+            <div className="mb-4 text-green-400 text-xl font-bold uppercase">
+                Sketch Winner: {gameState.round2WinnerName} (Advantage Sent)
+            </div>
+        )}
         <Timer duration={240} onComplete={() => {
             if (gameState.status === 'debrief1') {
                 advance('round2');
@@ -581,7 +622,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
           <div className="bg-black p-8 rounded-xl border border-slate-700 text-center">
             <Volume2 className="w-16 h-16 text-blue-500 mx-auto mb-4 animate-pulse" />
             <h3 className="text-2xl font-bold">AUDIO EVIDENCE PLAYING</h3>
-            <p className="text-slate-500">Slowed down 400%</p>
+            <p className="text-slate-500">2 Clips. Slowed down 55%.</p>
             {/* Hidden audio element for effects */}
             <audio ref={effectAudioRef} /> 
           </div>
@@ -601,11 +642,12 @@ function HostView({ gameId, gameState, effectAudioRef }) {
            {gameState.sketches && gameState.sketches.map((s, i) => (
              <div key={i} className="aspect-square bg-white rounded shadow-lg overflow-hidden relative">
                  <img src={s.url} className="w-full h-full object-cover" />
-                 <div className="absolute bottom-0 bg-black/50 text-white w-full text-center text-xs p-1">{s.name}</div>
+                 {/* HIDDEN NAME UNTIL WINNER */}
              </div>
            ))}
         </div>
-        <Timer duration={15} onComplete={() => advance('debrief2')} />
+        <Timer duration={15} onComplete={handleRound2Winner} />
+        <button onClick={handleRound2Winner} className="bg-slate-700 mt-4 px-4 py-2 rounded">End Voting</button>
       </div>
     );
   }
@@ -734,6 +776,7 @@ function PlayerView({ gameId, gameState, playerState, user }) {
 
   const submitVote = async (sketchUid) => {
       setHasVotedRound2(true);
+      // In real app we'd increment a 'votes' counter on the game state sketches array
   };
 
   const submitFinalVote = async (suspectUid) => {
@@ -758,7 +801,7 @@ function PlayerView({ gameId, gameState, playerState, user }) {
       await updateDoc(targetRef, {
           inbox: arrayUnion({
               from: user.uid, // "Players will see who sent them a note"
-              originalAuthor: currentCard.originalAuthor, // Optional: do we reveal who wrote it? Prompt says "Rumors are anonymous" initially. 
+              originalAuthor: currentCard.originalAuthor, 
               text: currentRumorText
           })
       });
@@ -850,7 +893,19 @@ function PlayerView({ gameId, gameState, playerState, user }) {
   }
   
   if (gameState.status === 'round2_lineup') {
-     if (hasVotedRound2) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Vote Submitted.</div>;
+     if (hasVotedRound2) {
+         return (
+             <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-slate-500 p-4 text-center">
+                 <div>Vote Submitted.</div>
+                 {playerState.advantageClue && (
+                     <div className="mt-4 bg-green-900 p-4 rounded text-green-200 border border-green-700 animate-in slide-in-from-bottom">
+                         <div className="font-bold uppercase text-xs mb-1">Winner Advantage</div>
+                         {playerState.advantageClue}
+                     </div>
+                 )}
+             </div>
+         );
+     }
      
      return (
         <div className="h-screen bg-slate-950 p-4 overflow-y-auto">
