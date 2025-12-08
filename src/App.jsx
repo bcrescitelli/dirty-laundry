@@ -18,7 +18,7 @@ import {
 } from 'firebase/firestore';
 import { 
   Users, Clock, Fingerprint, Edit3, ShieldAlert, 
-  FileText, Send, Lock, Zap, ArrowRight, Eye, Volume2, VolumeX, Mic, Play, Pause, Gavel, ThumbsUp, Mail
+  FileText, Send, Lock, Zap, ArrowRight, Eye, Volume2, VolumeX, Mic, Play, Pause, Gavel, ThumbsUp, Mail, CheckCircle, XCircle
 } from 'lucide-react';
 
 /* -----------------------------------------------------------------------
@@ -286,7 +286,8 @@ export default function App() {
       score: 0,
       hand: [], // For rumors
       inbox: [], // For received rumors
-      advantageClue: null // For winner
+      advantageClue: null, // For winner
+      guessesLeft: 5 // For puzzle
     });
     await updateDoc(gameRef, { players: arrayUnion({ uid: user.uid, name: name }) });
     setGameId(cleanCode);
@@ -337,8 +338,6 @@ function HomeScreen({ onCreate, onJoin, error }) {
 
 // --- HOST VIEW ---
 function HostView({ gameId, gameState, effectAudioRef }) {
-  const [transcriptClue, setTranscriptClue] = useState("");
-
   // GAME LOOP CONTROLS
   const advance = async (nextStatus, extraData = {}) => {
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
@@ -377,7 +376,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     const updates = players.map(p => {
         const isK = p.uid === killerUid;
         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
-        return updateDoc(ref, { isMurderer: isK, round1Guess: null, round4Vote: null, hand: [], inbox: [], advantageClue: null, sketchVote: 0 });
+        return updateDoc(ref, { isMurderer: isK, round1Guess: null, round4Vote: null, hand: [], inbox: [], advantageClue: null, sketchVote: 0, guessesLeft: 5 });
     });
     await Promise.all(updates);
 
@@ -429,7 +428,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
             
             effectAudioRef.current.src = audiosToPlay[index];
             effectAudioRef.current.playbackRate = 0.55; // Deep voice filter
-            effectAudioRef.current.preservesPitch = false; // Important for anonymity if supported
+            effectAudioRef.current.preservesPitch = false; 
             
             await effectAudioRef.current.play().catch(e => console.log("Audio fail", e));
             
@@ -482,14 +481,27 @@ function HostView({ gameId, gameState, effectAudioRef }) {
   };
   
   const setupRound3Transcript = async () => {
-      // Get Killer's answer
+      // 1. Get Killer's answer
       const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${gameState.murdererId}`);
       const snap = await getDoc(ref);
       let text = "THE MURDERER WAS SEEN NEAR THE LAKE HOUSE"; // Fallback
       if (snap.exists() && snap.data().dossier?.neighborOpinion) {
           text = snap.data().dossier.neighborOpinion.toUpperCase();
       }
-      setTranscriptClue(text);
+      
+      // 2. Prepare the puzzle data
+      const phraseChars = text.split('');
+      const revealed = phraseChars.map(c => c === ' ' ? true : false); // Spaces are revealed
+      
+      // 3. Store in DB
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
+          round3Data: {
+              phrase: phraseChars,
+              revealed: revealed
+          }
+      });
+      
+      advance('round3');
   };
 
   const setupRound4Exchange = async () => {
@@ -594,8 +606,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
                 advance('round2');
                 setTimeout(setupRound2Audio, 1000); 
             } else {
-                advance('round3');
-                setTimeout(setupRound3Transcript, 500);
+                setupRound3Transcript(); // Generate DB entry BEFORE moving
             }
         }} />
         <button onClick={() => {
@@ -603,8 +614,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
                 advance('round2');
                 setTimeout(setupRound2Audio, 1000);
             } else {
-                advance('round3');
-                setTimeout(setupRound3Transcript, 500);
+                setupRound3Transcript();
             }
         }} className="mt-8 bg-red-900/50 text-red-200 px-6 py-2 rounded">SKIP DEBRIEF</button>
       </div>
@@ -650,22 +660,20 @@ function HostView({ gameId, gameState, effectAudioRef }) {
   }
 
   if (gameState.status === 'round3') {
-    const transcript = transcriptClue || "FETCHING EVIDENCE...";
-    const jumbled = transcript.split('').map((char, i) => {
-      const n = i + 1;
-      if (n % 2 === 0 || n % 5 === 0) return '_';
-      return char;
-    }).join(' ');
-
+    const puzzle = gameState.round3Data || { phrase: [], revealed: [] };
+    
     return (
       <div className="flex flex-col h-screen bg-slate-900 p-8 items-center justify-center">
         <h2 className="text-red-500 tracking-widest text-xl mb-4">ROUND 3: THE TRIALS</h2>
-        <div className="bg-black border-2 border-red-900 p-12 rounded-xl max-w-4xl w-full text-center">
-          <h3 className="text-slate-500 mb-4 uppercase">Intercepted Transcript</h3>
-          <p className="font-mono text-4xl text-green-500 leading-relaxed tracking-wider">{jumbled}</p>
+        <div className="bg-black border-2 border-red-900 p-12 rounded-xl max-w-5xl w-full text-center flex flex-wrap justify-center gap-2">
+           {puzzle.phrase.map((char, i) => (
+               <div key={i} className={`w-12 h-16 border-b-4 text-4xl flex items-center justify-center font-mono ${puzzle.revealed[i] ? 'text-green-400 border-green-600' : 'text-transparent border-slate-600'}`}>
+                   {puzzle.revealed[i] ? char : '_'}
+               </div>
+           ))}
         </div>
         <div className="mt-8 flex gap-4">
-           <Timer duration={120} onComplete={setupRound4Exchange} />
+           <Timer duration={90} onComplete={setupRound4Exchange} />
            <button onClick={setupRound4Exchange} className="bg-red-600 text-white font-bold px-8 py-4 rounded">START RUMOR MILL</button>
         </div>
       </div>
@@ -811,6 +819,27 @@ function PlayerView({ gameId, gameState, playerState, user }) {
       setTargetPlayerId("");
   };
 
+  const submitGuess = async (idx, letter) => {
+      if (!gameState.round3Data || playerState.guessesLeft <= 0) return;
+      
+      // Validate
+      const targetChar = gameState.round3Data.phrase[idx];
+      const guessChar = letter.toUpperCase();
+      
+      if (guessChar === targetChar) {
+          // Reveal in DB
+          const newRevealed = [...gameState.round3Data.revealed];
+          newRevealed[idx] = true;
+          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
+              "round3Data.revealed": newRevealed
+          });
+      }
+      
+      // Reduce guesses
+      const myRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`);
+      await updateDoc(myRef, { guessesLeft: playerState.guessesLeft - 1 });
+  };
+
   // --- VIEWS ---
 
   // LOBBY / QUESTIONNAIRE
@@ -933,19 +962,45 @@ function PlayerView({ gameId, gameState, playerState, user }) {
       );
   }
 
-  // ROUND 3: REVEAL TO PLAYER
+  // ROUND 3: REVEAL TO PLAYER + PUZZLE
   if (gameState.status === 'round3') {
     const isMe = playerState.isMurderer;
+    const puzzle = gameState.round3Data;
+    
     return (
-      <div className={`h-screen flex flex-col items-center justify-center p-8 text-center ${isMe ? 'bg-red-950' : 'bg-slate-900'}`}>
-        <div className="mb-6">
-          {isMe ? <ShieldAlert className="w-20 h-20 text-red-500 mx-auto" /> : <ShieldAlert className="w-20 h-20 text-blue-500 mx-auto" />}
+      <div className={`min-h-screen p-4 flex flex-col ${isMe ? 'bg-red-950' : 'bg-slate-900'}`}>
+        <div className="mb-6 text-center">
+          <h2 className="text-2xl font-bold text-white mb-2">YOUR ROLE</h2>
+          <p className={`text-lg font-mono ${isMe ? 'text-red-300' : 'text-blue-300'}`}>
+            {isMe ? "YOU ARE THE MURDERER" : "YOU ARE INNOCENT"}
+          </p>
         </div>
-        <h2 className="text-3xl font-bold text-white mb-2">YOUR ROLE</h2>
-        <p className={`text-xl font-mono ${isMe ? 'text-red-300' : 'text-blue-300'}`}>
-          {isMe ? "YOU ARE THE MURDERER" : "YOU ARE INNOCENT"}
-        </p>
-        {isMe && <p className="mt-4 text-sm text-red-200">Deflect blame. Tamper with the rumors in the next round.</p>}
+        
+        {/* PUZZLE INTERACTION */}
+        {puzzle && (
+            <div className="flex-1">
+                <h3 className="text-slate-400 text-sm uppercase mb-4 text-center">Guess The Clue ({playerState.guessesLeft} left)</h3>
+                <div className="flex flex-wrap gap-2 justify-center">
+                    {puzzle.phrase.map((char, i) => {
+                        const isRevealed = puzzle.revealed[i];
+                        if (char === ' ') return <div key={i} className="w-8"></div>;
+                        return (
+                            <button 
+                                key={i}
+                                disabled={isRevealed || playerState.guessesLeft <= 0}
+                                onClick={() => {
+                                    const letter = prompt("Guess this letter:");
+                                    if (letter) submitGuess(i, letter);
+                                }}
+                                className={`w-8 h-10 border-b-2 flex items-center justify-center font-bold ${isRevealed ? 'text-green-400 border-green-500' : 'text-slate-500 border-slate-600'}`}
+                            >
+                                {isRevealed ? char : '?'}
+                            </button>
+                        )
+                    })}
+                </div>
+            </div>
+        )}
       </div>
     );
   }
