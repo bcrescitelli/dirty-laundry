@@ -75,7 +75,7 @@ const AudioRecorder = ({ onSave, label }) => {
   const chunksRef = useRef([]);
 
   const startRecording = async (e) => {
-    if (e) e.preventDefault(); // Prevent scrolling/ghost clicks on touch
+    if (e) e.preventDefault();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
@@ -88,7 +88,7 @@ const AudioRecorder = ({ onSave, label }) => {
         reader.readAsDataURL(blob);
         reader.onloadend = () => {
           setAudioData(reader.result);
-          onSave(reader.result); // Send Base64 up
+          onSave(reader.result); 
         };
       };
       
@@ -205,8 +205,10 @@ export default function App() {
   const [view, setView] = useState('home'); 
   const [error, setError] = useState('');
   const [isMuted, setIsMuted] = useState(false);
+  
   const audioRef = useRef(null); // Background music
   const effectAudioRef = useRef(null); // Evidence audio
+  const sfxRef = useRef(null); // Join Sound
 
   // Auth & Listeners
   useEffect(() => {
@@ -233,23 +235,35 @@ export default function App() {
     });
   }, [user, gameId, view]);
 
-  // HOST MUSIC LOGIC - ROBUST CHECK
+  // HOST MUSIC LOGIC
   useEffect(() => {
     if (!audioRef.current || view !== 'host') return;
     const isDebrief = gameState?.status.includes('debrief') || gameState?.status === 'lobby';
     
     if (isDebrief && !isMuted) {
       audioRef.current.volume = 0.3;
-      const playPromise = audioRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(error => {
-          console.log("Audio Autoplay prevented. User interaction required.", error);
-        });
-      }
+      audioRef.current.play().catch(() => {});
     } else {
       audioRef.current.pause();
     }
   }, [gameState?.status, isMuted, view]);
+
+  // JOIN SOUND EFFECT
+  const prevPlayerCount = useRef(0);
+  useEffect(() => {
+      if (view === 'host' && gameState?.status === 'lobby') {
+          const count = gameState.players?.length || 0;
+          if (count > prevPlayerCount.current) {
+              // Play join sound
+              if (sfxRef.current) {
+                  sfxRef.current.volume = 1.0;
+                  sfxRef.current.currentTime = 0;
+                  sfxRef.current.play().catch(e => console.log("SFX Blocked", e));
+              }
+          }
+          prevPlayerCount.current = count;
+      }
+  }, [gameState?.players, view, gameState?.status]);
 
   // ACTIONS
   const createGame = async () => {
@@ -298,7 +312,12 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-red-500 selection:text-white overflow-hidden relative">
-      {view === 'host' && <audio ref={audioRef} src="/music.mp3" loop />}
+      {view === 'host' && (
+          <>
+            <audio ref={audioRef} src="/music.mp3" loop />
+            <audio ref={sfxRef} src="/join.mp3" />
+          </>
+      )}
       
       {/* Volume Toggle */}
       {view === 'host' && (
@@ -427,13 +446,17 @@ function HostView({ gameId, gameState, effectAudioRef }) {
             if (index >= audiosToPlay.length) return;
             
             effectAudioRef.current.src = audiosToPlay[index];
-            effectAudioRef.current.playbackRate = 0.55; // Deep voice filter
+            effectAudioRef.current.playbackRate = 0.75; // Faster but still anonymous
             effectAudioRef.current.preservesPitch = false; 
             
-            await effectAudioRef.current.play().catch(e => console.log("Audio fail", e));
+            try {
+                await effectAudioRef.current.play();
+            } catch(e) {
+                console.log("Audio play fail", e);
+            }
             
             effectAudioRef.current.onended = () => {
-                setTimeout(() => playClip(index + 1), 1000); // Wait 1s between clips
+                setTimeout(() => playClip(index + 1), 1000); 
             };
         };
         playClip(0);
@@ -489,9 +512,12 @@ function HostView({ gameId, gameState, effectAudioRef }) {
           text = snap.data().dossier.neighborOpinion.toUpperCase();
       }
       
-      // 2. Prepare the puzzle data
+      // 2. Prepare the puzzle data with 30% revealed initially
       const phraseChars = text.split('');
-      const revealed = phraseChars.map(c => c === ' ' ? true : false); // Spaces are revealed
+      const revealed = phraseChars.map(c => {
+          if(c === ' ') return true;
+          return Math.random() < 0.3; // 30% chance to reveal
+      }); 
       
       // 3. Store in DB
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
@@ -629,7 +655,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
           <div className="bg-black p-8 rounded-xl border border-slate-700 text-center">
             <Volume2 className="w-16 h-16 text-blue-500 mx-auto mb-4 animate-pulse" />
             <h3 className="text-2xl font-bold">AUDIO EVIDENCE PLAYING</h3>
-            <p className="text-slate-500">2 Clips. Slowed down 55%.</p>
+            <p className="text-slate-500">2 Clips. Slowed down slightly.</p>
             {/* Hidden audio element for effects */}
             <audio ref={effectAudioRef} /> 
           </div>
