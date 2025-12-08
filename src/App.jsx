@@ -74,7 +74,8 @@ const AudioRecorder = ({ onSave, label }) => {
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
 
-  const startRecording = async () => {
+  const startRecording = async (e) => {
+    if (e) e.preventDefault(); // Prevent scrolling/ghost clicks on touch
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       mediaRecorderRef.current = new MediaRecorder(stream);
@@ -93,15 +94,18 @@ const AudioRecorder = ({ onSave, label }) => {
       
       mediaRecorderRef.current.start();
       setRecording(true);
-      // Auto-stop after 10 seconds (UPDATED)
-      setTimeout(() => { if(mediaRecorderRef.current?.state === 'recording') stopRecording(); }, 10000);
+      // Auto-stop after 10 seconds
+      setTimeout(() => { 
+          if(mediaRecorderRef.current?.state === 'recording') stopRecording(); 
+      }, 10000);
     } catch (err) {
       console.error("Mic error", err);
       alert("Microphone access denied. Check browser permissions.");
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = (e) => {
+    if (e) e.preventDefault();
     if(mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop();
         setRecording(false);
@@ -236,7 +240,6 @@ export default function App() {
     
     if (isDebrief && !isMuted) {
       audioRef.current.volume = 0.3;
-      // We wrap in a try/catch because browsers block autoplay until interaction
       const playPromise = audioRef.current.play();
       if (playPromise !== undefined) {
         playPromise.catch(error => {
@@ -464,12 +467,6 @@ function HostView({ gameId, gameState, effectAudioRef }) {
   };
 
   const handleRound2Winner = async () => {
-      // Find winner based on votes
-      // In a real app we'd query collection, here we check 'sketches' local state which updated via Firestore... 
-      // Actually sketches are static in game doc. Votes are stored on players or game?
-      // Simplified: We assume votes came in. We pick a random winner for demo if logic complex.
-      // But let's check game.sketches if we updated them. 
-      // We will just pick a random winner to award the advantage for flow.
       const winner = gameState.players[Math.floor(Math.random() * gameState.players.length)];
       
       // Find an innocent person (NOT killer, NOT winner)
@@ -669,7 +666,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
         </div>
         <div className="mt-8 flex gap-4">
            <Timer duration={120} onComplete={setupRound4Exchange} />
-           <button onClick={() => advance('voting')} className="bg-red-600 text-white font-bold px-8 py-4 rounded">CALL VOTE (END GAME)</button>
+           <button onClick={setupRound4Exchange} className="bg-red-600 text-white font-bold px-8 py-4 rounded">START RUMOR MILL</button>
         </div>
       </div>
     );
@@ -919,6 +916,21 @@ function PlayerView({ gameId, gameState, playerState, user }) {
            </div>
         </div>
      );
+  }
+
+  // If we are in debrief2, we still show the advantage clue if the player won
+  if (gameState.status === 'debrief2') {
+      return (
+          <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-slate-500 p-4 text-center">
+             <div>Debrief in Progress on TV...</div>
+             {playerState.advantageClue && (
+                 <div className="mt-4 bg-green-900 p-4 rounded text-green-200 border border-green-700">
+                     <div className="font-bold uppercase text-xs mb-1">Winner Advantage</div>
+                     {playerState.advantageClue}
+                 </div>
+             )}
+          </div>
+      );
   }
 
   // ROUND 3: REVEAL TO PLAYER
