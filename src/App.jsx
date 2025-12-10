@@ -22,10 +22,11 @@ import {
 } from 'lucide-react';
 
 /* -----------------------------------------------------------------------
-  GAME CONFIGURATION & CONSTANTS
+  GAME CONFIGURATION
   -----------------------------------------------------------------------
 */
-const WEAPONS = [
+// Default backup weapons if players are uncreative
+const DEFAULT_WEAPONS = [
   'Rusty Axe', 'Poisoned Gumbo', 'Bear Trap', 'Hunting Rifle', 'Canoe Paddle', 'Fireplace Poker', 'Strangulation'
 ];
 
@@ -172,7 +173,7 @@ const AudioRecorder = ({ onSave, label }) => {
   };
 
   const stopRecording = (e) => {
-    if (e) e.preventDefault();
+    if (e && e.preventDefault) e.preventDefault();
     if(mediaRecorderRef.current?.state === 'recording') {
         mediaRecorderRef.current.stop();
         setRecording(false);
@@ -352,6 +353,8 @@ export default function App() {
       players: [],
       messages: [],
       roundStats: {},
+      possibleWeapons: [], // Populated in brainstorm
+      murderWeapon: '',
       createdAt: new Date().toISOString()
     });
     setGameId(newGameId);
@@ -377,7 +380,8 @@ export default function App() {
       hand: [], 
       inbox: [], 
       advantageClue: null, 
-      guessesLeft: 5 
+      guessesLeft: 5,
+      submittedWeapons: [] 
     });
     await updateDoc(gameRef, { players: arrayUnion({ uid: user.uid, name: name }) });
     setGameId(cleanCode);
@@ -444,36 +448,60 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     });
   };
 
-  const startGame = async () => {
-    const players = gameState.players;
-    const killerIndex = Math.floor(Math.random() * players.length);
-    const killerUid = players[killerIndex].uid;
-    const weapon = WEAPONS[Math.floor(Math.random() * WEAPONS.length)];
-    
-    // Assign roles but keep hidden
-    const updates = players.map(p => {
-      const isK = p.uid === killerUid;
-      const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
-      return updateDoc(ref, { isMurderer: isK });
-    });
-    await Promise.all(updates);
+  const startBrainstorm = async () => {
+      // Go to weapon brainstorm first
+      advance('weapon_brainstorm');
+  };
 
-    // PLAY INTRO VIDEO FIRST
-    advance('intro', { murdererId: killerUid, murderWeapon: weapon });
+  const finishBrainstorm = async () => {
+      // 1. Gather weapons from all players
+      let allWeapons = [];
+      for (const p of gameState.players) {
+          const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
+          const snap = await getDoc(ref);
+          if (snap.exists() && snap.data().submittedWeapons) {
+              allWeapons = [...allWeapons, ...snap.data().submittedWeapons];
+          }
+      }
+      
+      // 2. Mix with defaults if needed
+      if (allWeapons.length < 5) allWeapons = [...allWeapons, ...DEFAULT_WEAPONS];
+      
+      // 3. Shuffle and pick top 7
+      allWeapons = allWeapons.sort(() => 0.5 - Math.random()).slice(0, 7);
+      
+      // 4. Update Game State
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
+          possibleWeapons: allWeapons
+      });
+      
+      // 5. Start Game properly
+      const killerIndex = Math.floor(Math.random() * gameState.players.length);
+      const killerUid = gameState.players[killerIndex].uid;
+      const weapon = allWeapons[Math.floor(Math.random() * allWeapons.length)];
+      
+      // Assign roles
+      const updates = gameState.players.map(p => {
+        const isK = p.uid === killerUid;
+        const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
+        return updateDoc(ref, { isMurderer: isK });
+      });
+      await Promise.all(updates);
+
+      advance('intro', { murdererId: killerUid, murderWeapon: weapon });
   };
 
   const restartGame = async () => {
     const players = gameState.players;
     const killerIndex = Math.floor(Math.random() * players.length);
     const killerUid = players[killerIndex].uid;
-    const weapon = WEAPONS[Math.floor(Math.random() * WEAPONS.length)];
-
+    // We will clear weapons and go back to brainstorm
+    
     // FULL RESET FOR PLAYERS
     const updates = players.map(p => {
-        const isK = p.uid === killerUid;
         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
         return updateDoc(ref, { 
-            isMurderer: isK, 
+            isMurderer: false, 
             round1Guess: null, 
             round4Vote: null, 
             hand: [], 
@@ -481,14 +509,27 @@ function HostView({ gameId, gameState, effectAudioRef }) {
             advantageClue: null, 
             sketchVote: 0, 
             guessesLeft: 5,
-            hasSubmittedRound1: false, // CRITICAL: Reset submission flags
-            sketch: null,              // CRITICAL: Clear old sketch
-            tamperedEvidence: false 
+            hasSubmittedRound1: false, 
+            sketch: null,              
+            tamperedEvidence: false,
+            // CRITICAL: Clear dossier so they re-record
+            dossier: {},
+            hasSubmittedDossier: false,
+            submittedWeapons: []
         });
     });
     await Promise.all(updates);
 
-    advance('round1', { murdererId: killerUid, murderWeapon: weapon });
+    // Reset Game State to Lobby so intake happens again
+    await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
+        status: 'lobby',
+        roundStats: {},
+        possibleWeapons: [],
+        murderWeapon: '',
+        sketches: [],
+        round3Data: null,
+        round2WinnerName: null
+    });
   };
 
   // --- LOGIC: AGGREGATE STATS ---
@@ -515,13 +556,15 @@ function HostView({ gameId, gameState, effectAudioRef }) {
   };
 
   const setupRound2Audio = async () => {
-     // Fetch 2 random players who are NOT the killer
+     // Fetch innocents
      const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId);
-     const shuffled = innocents.sort(() => 0.5 - Math.random()).slice(0, 2);
+     // Shuffle
+     const shuffled = innocents.sort(() => 0.5 - Math.random());
      
      // Store the audios to play
      const audiosToPlay = [];
      for (const p of shuffled) {
+         if (audiosToPlay.length >= 2) break; // Only need 2
          const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
          const snap = await getDoc(ref);
          if (snap.exists() && snap.data().dossier?.descriptionAudio) {
@@ -579,16 +622,13 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 
   const handleRound2Winner = async () => {
       const winner = gameState.players[Math.floor(Math.random() * gameState.players.length)];
-      
       // Find an innocent person (NOT killer, NOT winner)
       const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId && p.uid !== winner.uid);
       const revealedInnocent = innocents[Math.floor(Math.random() * innocents.length)];
-      
       if (revealedInnocent) {
           const winRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${winner.uid}`);
           await updateDoc(winRef, { advantageClue: `${revealedInnocent.name} is NOT the killer.` });
       }
-      
       advance('debrief2', { round2WinnerName: winner.name });
   };
   
@@ -615,7 +655,6 @@ function HostView({ gameId, gameState, effectAudioRef }) {
               revealed: revealed
           }
       });
-      
       advance('round3');
   };
 
@@ -630,7 +669,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
          }
       }
       
-      // Fallback if not enough rumors (e.g. testing)
+      // Fallback
       if (rumors.length === 0) {
           rumors.push({ id: "default1", originalAuthor: "Anonymous", text: "I saw someone lurking outside." });
           rumors.push({ id: "default2", originalAuthor: "Anonymous", text: "Someone here is lying." });
@@ -671,10 +710,24 @@ function HostView({ gameId, gameState, effectAudioRef }) {
           ))}
         </div>
         {gameState.players.length > 0 && (
-          <button onClick={startGame} className="bg-red-600 text-white text-2xl font-bold px-12 py-4 rounded-full shadow-lg hover:bg-red-700 relative z-10 hover:scale-105 transition-all">START NIGHT</button>
+          <button onClick={startBrainstorm} className="bg-red-600 text-white text-2xl font-bold px-12 py-4 rounded-full shadow-lg hover:bg-red-700 relative z-10 hover:scale-105 transition-all">START NIGHT</button>
         )}
       </div>
     );
+  }
+
+  if (gameState.status === 'weapon_brainstorm') {
+      return (
+        <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 relative overflow-hidden">
+            <SpookyBackground />
+            <h2 className="text-4xl font-bold text-white mb-4 relative z-10">THE ARMORY</h2>
+            <p className="text-xl text-slate-400 mb-8 relative z-10">Players are submitting potential murder weapons...</p>
+            <div className="relative z-10">
+                <Timer duration={30} onComplete={finishBrainstorm} />
+            </div>
+            <button onClick={finishBrainstorm} className="mt-8 bg-slate-700 px-6 py-2 rounded relative z-10">Skip Timer</button>
+        </div>
+      );
   }
 
   // INTRO VIDEO
@@ -749,7 +802,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
                     advance('round2');
                     setTimeout(setupRound2Audio, 1000); 
                 } else {
-                    setupRound3Transcript(); // Generate DB entry BEFORE moving
+                    setupRound3Transcript(); 
                 }
             }} />
         </div>
@@ -816,8 +869,8 @@ function HostView({ gameId, gameState, effectAudioRef }) {
         <h2 className="text-red-500 tracking-widest text-xl mb-4 relative z-10">ROUND 3: THE TRIALS</h2>
         <div className="bg-black/90 border-2 border-red-900 p-12 rounded-xl max-w-5xl w-full text-center flex flex-wrap justify-center gap-2 relative z-10 shadow-[0_0_30px_rgba(220,38,38,0.3)]">
            {puzzle.phrase.map((char, i) => (
-               <div key={i} className={`w-12 h-16 border-b-4 text-4xl flex items-center justify-center font-mono ${puzzle.revealed[i] ? 'text-green-400 border-green-600' : 'text-transparent border-slate-600'}`}>
-                   {puzzle.revealed[i] ? char : '_'}
+               <div key={i} className={`w-12 h-16 text-4xl flex items-center justify-center font-mono ${char === ' ' ? '' : 'border-b-4'} ${puzzle.revealed[i] ? 'text-green-400 border-green-600' : 'text-transparent border-slate-600'}`}>
+                   {puzzle.revealed[i] ? char : ''}
                </div>
            ))}
         </div>
@@ -905,15 +958,18 @@ function PlayerView({ gameId, gameState, playerState, user }) {
   const [formData, setFormData] = useState({ rumor: '' });
   const [hasVotedRound2, setHasVotedRound2] = useState(false);
   const [hasVotedFinal, setHasVotedFinal] = useState(false);
+  const [showRole, setShowRole] = useState(false);
+  const [weaponInput, setWeaponInput] = useState("");
+  const [sketchSent, setSketchSent] = useState(false);
   
   // Round 4 State
   const [targetPlayerId, setTargetPlayerId] = useState("");
   const [currentRumorText, setCurrentRumorText] = useState("");
+  const [rumorComment, setRumorComment] = useState(""); // Innocents must fill this
   const [activeCardIndex, setActiveCardIndex] = useState(0); // 0 or 1
   const [cardsSent, setCardsSent] = useState([]); // Array of card IDs sent
 
   useEffect(() => {
-      // Auto-set initial rumor text if available from hand
       if (playerState.hand && playerState.hand.length > activeCardIndex) {
           setCurrentRumorText(playerState.hand[activeCardIndex].text);
       }
@@ -927,6 +983,15 @@ function PlayerView({ gameId, gameState, playerState, user }) {
     });
   };
 
+  const submitWeapon = async () => {
+      if (!weaponInput) return;
+      const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`);
+      await updateDoc(ref, {
+          submittedWeapons: arrayUnion(weaponInput)
+      });
+      setWeaponInput("");
+  };
+
   const submitCase = async (suspectId, weapon) => {
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), {
       round1Guess: { suspectId, weapon },
@@ -936,12 +1001,10 @@ function PlayerView({ gameId, gameState, playerState, user }) {
 
   const submitVote = async (sketchUid) => {
       setHasVotedRound2(true);
-      // In real app we'd increment a 'votes' counter on the game state sketches array
   };
 
   const submitFinalVote = async (suspectUid) => {
       setHasVotedFinal(true);
-      // In real app, write to DB
   };
   
   const sendRumor = async () => {
@@ -950,26 +1013,32 @@ function PlayerView({ gameId, gameState, playerState, user }) {
       const currentCard = playerState.hand[activeCardIndex];
       const isTampered = currentRumorText !== currentCard.text;
       
-      // If murderer constraint: must tamper
+      // MURDERER CONSTRAINT: MUST TAMPER
       if (playerState.isMurderer && !isTampered) {
           alert("As the Murderer, you MUST change the text before sending!");
           return;
       }
 
+      // INNOCENT CONSTRAINT: MUST ADD COMMENT
+      if (!playerState.isMurderer && !rumorComment) {
+          alert("You must add a comment to this rumor!");
+          return;
+      }
+
+      const finalMessage = playerState.isMurderer ? currentRumorText : `${currentRumorText} (Note: ${rumorComment})`;
+
       // Add to Recipient's Inbox
       const targetRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${targetPlayerId}`);
       await updateDoc(targetRef, {
           inbox: arrayUnion({
-              from: user.uid, // "Players will see who sent them a note"
+              from: user.uid, 
               originalAuthor: currentCard.originalAuthor, 
-              text: currentRumorText
+              text: finalMessage
           })
       });
 
-      // Mark sent locally
       setCardsSent([...cardsSent, currentCard.id]);
-      
-      // Move to next card if available
+      setRumorComment("");
       if (activeCardIndex === 0) setActiveCardIndex(1);
       setTargetPlayerId("");
   };
@@ -977,12 +1046,10 @@ function PlayerView({ gameId, gameState, playerState, user }) {
   const submitGuess = async (idx, letter) => {
       if (!gameState.round3Data || playerState.guessesLeft <= 0) return;
       
-      // Validate
       const targetChar = gameState.round3Data.phrase[idx];
       const guessChar = letter.toUpperCase();
       
       if (guessChar === targetChar) {
-          // Reveal in DB
           const newRevealed = [...gameState.round3Data.revealed];
           newRevealed[idx] = true;
           await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
@@ -990,14 +1057,12 @@ function PlayerView({ gameId, gameState, playerState, user }) {
           });
       }
       
-      // Reduce guesses
       const myRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`);
       await updateDoc(myRef, { guessesLeft: playerState.guessesLeft - 1 });
   };
 
   // --- VIEWS ---
 
-  // LOBBY / QUESTIONNAIRE
   if (gameState.status === 'lobby') {
     if (playerState.hasSubmittedDossier) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Dossier Filed. Waiting...</div>;
     
@@ -1031,9 +1096,28 @@ function PlayerView({ gameId, gameState, playerState, user }) {
     );
   }
 
-  // ROUND 1: 49 PERMUTATIONS
+  if (gameState.status === 'weapon_brainstorm') {
+      return (
+          <div className="h-screen bg-slate-900 p-6">
+              <h2 className="text-white font-bold mb-4">SUGGEST WEAPONS</h2>
+              <div className="flex gap-2 mb-4">
+                  <input 
+                    className="flex-1 bg-slate-800 rounded p-3 text-white" 
+                    placeholder="e.g. Frozen Fish" 
+                    value={weaponInput}
+                    onChange={e => setWeaponInput(e.target.value)}
+                  />
+                  <button onClick={submitWeapon} className="bg-blue-600 px-4 rounded text-white font-bold">ADD</button>
+              </div>
+              <div className="text-slate-400 text-sm">Added: {playerState.submittedWeapons?.length || 0}</div>
+          </div>
+      );
+  }
+
   if (gameState.status === 'round1') {
     if (playerState.hasSubmittedRound1) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Case Submitted.</div>;
+
+    const possibleWeapons = gameState.possibleWeapons || WEAPONS;
 
     return (
       <div className="h-screen bg-slate-950 p-4 overflow-y-auto">
@@ -1043,7 +1127,7 @@ function PlayerView({ gameId, gameState, playerState, user }) {
             <div key={suspect.uid} className="bg-slate-900 p-4 rounded border border-slate-800">
               <div className="font-bold text-lg text-white mb-2">{suspect.name}</div>
               <div className="grid grid-cols-2 gap-2">
-                {WEAPONS.map(w => (
+                {possibleWeapons.map(w => (
                   <button 
                     key={w} 
                     onClick={() => submitCase(suspect.uid, w)}
@@ -1060,14 +1144,16 @@ function PlayerView({ gameId, gameState, playerState, user }) {
     );
   }
 
-  // ROUND 2: SKETCH
   if (gameState.status === 'round2') {
+    if (sketchSent) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Waiting for others...</div>;
+
     return (
       <div className="h-screen bg-slate-950 p-4 flex flex-col items-center">
         <h2 className="text-white font-bold mb-4">SKETCH THE KILLER</h2>
         <p className="text-sm text-slate-400 mb-4 text-center">Based on the audio you just heard.</p>
         <DrawingCanvas onSave={async (url) => {
            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), { sketch: url });
+           setSketchSent(true);
         }} />
       </div>
     );
@@ -1102,7 +1188,6 @@ function PlayerView({ gameId, gameState, playerState, user }) {
      );
   }
 
-  // If we are in debrief2, we still show the advantage clue if the player won
   if (gameState.status === 'debrief2') {
       return (
           <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-slate-500 p-4 text-center">
@@ -1117,21 +1202,29 @@ function PlayerView({ gameId, gameState, playerState, user }) {
       );
   }
 
-  // ROUND 3: REVEAL TO PLAYER + PUZZLE
+  // ROUND 3: DISCRETE REVEAL
   if (gameState.status === 'round3') {
     const isMe = playerState.isMurderer;
     const puzzle = gameState.round3Data;
     
     return (
-      <div className={`min-h-screen p-4 flex flex-col ${isMe ? 'bg-red-950' : 'bg-slate-900'}`}>
+      <div className="min-h-screen p-4 flex flex-col bg-slate-900">
         <div className="mb-6 text-center">
-          <h2 className="text-2xl font-bold text-white mb-2">YOUR ROLE</h2>
-          <p className={`text-lg font-mono ${isMe ? 'text-red-300' : 'text-blue-300'}`}>
-            {isMe ? "YOU ARE THE MURDERER" : "YOU ARE INNOCENT"}
-          </p>
+          <h2 className="text-2xl font-bold text-white mb-4">YOUR ROLE</h2>
+          {!showRole ? (
+              <button onClick={() => setShowRole(true)} className="bg-slate-700 px-6 py-3 rounded text-slate-300 w-full font-bold border border-slate-600">
+                  TAP TO REVEAL ROLE
+              </button>
+          ) : (
+              <div className="bg-black p-4 rounded border border-slate-700 animate-in fade-in">
+                  <p className={`text-lg font-mono font-bold ${isMe ? 'text-red-500' : 'text-blue-400'}`}>
+                    {isMe ? "YOU ARE THE MURDERER" : "YOU ARE INNOCENT"}
+                  </p>
+                  <button onClick={() => setShowRole(false)} className="text-xs text-slate-500 mt-2 underline">Hide</button>
+              </div>
+          )}
         </div>
         
-        {/* PUZZLE INTERACTION */}
         {puzzle && (
             <div className="flex-1">
                 <h3 className="text-slate-400 text-sm uppercase mb-4 text-center">Guess The Clue ({playerState.guessesLeft} left)</h3>
@@ -1164,7 +1257,6 @@ function PlayerView({ gameId, gameState, playerState, user }) {
   if (gameState.status === 'round4_exchange') {
     if (!playerState.hand || playerState.hand.length === 0) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Loading Rumors...</div>;
     
-    // Check if finished
     if (cardsSent.length >= 2) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Rumors Sent. Wait for debate.</div>;
 
     const currentCard = playerState.hand[activeCardIndex];
@@ -1185,7 +1277,18 @@ function PlayerView({ gameId, gameState, playerState, user }) {
                   />
               </div>
           ) : (
-              <p className="font-bold text-lg">{currentCard.text}</p>
+              <div className="space-y-2">
+                  <p className="font-bold text-lg">{currentCard.text}</p>
+                  <div className="border-t border-slate-300 pt-2">
+                      <p className="text-xs uppercase text-slate-500">Add Comment (Required):</p>
+                      <input 
+                        className="w-full bg-slate-100 p-2 rounded" 
+                        placeholder="I think..."
+                        value={rumorComment}
+                        onChange={e => setRumorComment(e.target.value)}
+                      />
+                  </div>
+              </div>
           )}
         </div>
         
@@ -1218,7 +1321,6 @@ function PlayerView({ gameId, gameState, playerState, user }) {
                         <div key={i} className="bg-slate-800 p-4 rounded border-l-4 border-blue-500">
                             <div className="text-xs text-slate-400 uppercase mb-1">From a player...</div>
                             <p className="text-lg text-white">"{msg.text}"</p>
-                            {/* In a real app we'd map `msg.from` ID to a Name if we wanted to reveal who sent it */}
                         </div>
                     ))
                 ) : (
@@ -1234,7 +1336,7 @@ function PlayerView({ gameId, gameState, playerState, user }) {
       if (hasVotedFinal) return <div className="h-screen bg-slate-900 flex items-center justify-center text-slate-500">Judgment Cast.</div>;
 
       return (
-        <div className="h-screen bg-slate-950 p-4">
+        <div className="h-screen bg-slate-900 p-4">
             <h2 className="text-red-500 font-bold mb-6 text-center text-2xl">WHO IS THE KILLER?</h2>
             <div className="grid grid-cols-2 gap-4">
                 {gameState.players.map(p => (
