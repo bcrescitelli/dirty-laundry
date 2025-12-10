@@ -293,15 +293,15 @@ export default function App() {
     await setDoc(playerRef, {
       uid: user.uid,
       name: name,
-      dossier: {}, // rumor, descriptionAudio, alibiAudio, impressionAudio, neighborOpinion
+      dossier: {}, 
       roleName: 'TBD',
       isMurderer: false,
       hasSubmittedDossier: false,
       score: 0,
-      hand: [], // For rumors
-      inbox: [], // For received rumors
-      advantageClue: null, // For winner
-      guessesLeft: 5 // For puzzle
+      hand: [], 
+      inbox: [], 
+      advantageClue: null, 
+      guessesLeft: 5 
     });
     await updateDoc(gameRef, { players: arrayUnion({ uid: user.uid, name: name }) });
     setGameId(cleanCode);
@@ -380,7 +380,8 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     });
     await Promise.all(updates);
 
-    advance('round1', { murdererId: killerUid, murderWeapon: weapon });
+    // PLAY INTRO VIDEO FIRST
+    advance('intro', { murdererId: killerUid, murderWeapon: weapon });
   };
 
   const restartGame = async () => {
@@ -578,6 +579,20 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     );
   }
 
+  // INTRO VIDEO
+  if (gameState.status === 'intro') {
+      return (
+          <div className="flex items-center justify-center h-screen bg-black">
+              <video 
+                src="/intro.mp4" 
+                autoPlay 
+                className="w-full h-full object-contain"
+                onEnded={() => advance('round1')}
+              />
+          </div>
+      );
+  }
+
   if (gameState.status === 'round1') {
     return (
       <div className="flex flex-col h-screen bg-slate-900 p-8">
@@ -655,7 +670,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
           <div className="bg-black p-8 rounded-xl border border-slate-700 text-center">
             <Volume2 className="w-16 h-16 text-blue-500 mx-auto mb-4 animate-pulse" />
             <h3 className="text-2xl font-bold">AUDIO EVIDENCE PLAYING</h3>
-            <p className="text-slate-500">2 Clips. Slowed down slightly.</p>
+            <p className="text-slate-500">2 Clips. Slowed down.</p>
             {/* Hidden audio element for effects */}
             <audio ref={effectAudioRef} /> 
           </div>
@@ -900,6 +915,15 @@ function PlayerView({ gameId, gameState, playerState, user }) {
         </div>
       </div>
     );
+  }
+
+  // INTRO VIDEO
+  if (gameState.status === 'intro') {
+      return (
+          <div className="flex items-center justify-center h-screen bg-black text-slate-500">
+              Watching Intro...
+          </div>
+      );
   }
 
   // ROUND 1: 49 PERMUTATIONS
