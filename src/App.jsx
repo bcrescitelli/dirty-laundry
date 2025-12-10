@@ -51,33 +51,31 @@ const appId = "murder-at-the-cabin";
 const GameStyles = () => (
   <style>{`
     @keyframes fog {
-      0% { transform: translateX(-10%); opacity: 0.4; }
-      50% { opacity: 0.6; }
-      100% { transform: translateX(10%); opacity: 0.4; }
+      0% { transform: translateX(-5%) translateY(0); opacity: 0.3; }
+      50% { opacity: 0.7; }
+      100% { transform: translateX(5%) translateY(-2%); opacity: 0.3; }
     }
     .fog-layer {
       position: absolute;
-      top: 0; left: -50%; width: 200%; height: 100%;
-      background: radial-gradient(circle, rgba(255,255,255,0) 0%, rgba(200,200,200,0.05) 40%, rgba(255,255,255,0) 70%);
-      animation: fog 20s ease-in-out infinite alternate;
+      top: 0; left: -50%; width: 200%; height: 120%;
+      background: url('data:image/svg+xml;utf8,%3Csvg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg"%3E%3Cfilter id="noiseFilter"%3E%3CfeTurbulence type="fractalNoise" baseFrequency="0.65" numOctaves="3" stitchTiles="stitch"/%3E%3C/filter%3E%3Crect width="100%25" height="100%25" filter="url(%23noiseFilter)" opacity="0.4"/%3E%3C/svg%3E');
+      background-size: 200px 200px;
+      animation: fog 30s ease-in-out infinite alternate;
       pointer-events: none;
-      z-index: 0;
+      z-index: 1;
+      mix-blend-mode: overlay;
     }
     @keyframes flicker {
       0%, 100% { opacity: 1; }
-      3% { opacity: 0.4; }
-      6% { opacity: 1; }
-      7% { opacity: 0.4; }
-      8% { opacity: 1; }
-      9% { opacity: 1; }
-      10% { opacity: 0.1; }
-      11% { opacity: 1; }
-      50% { opacity: 1; }
-      52% { opacity: 0.8; }
-      54% { opacity: 1; }
+      33% { opacity: 0.8; }
+      34% { opacity: 0.9; }
+      35% { opacity: 0.1; }
+      36% { opacity: 1; }
+      70% { opacity: 0.7; }
+      71% { opacity: 1; }
     }
     .cabin-flicker {
-      animation: flicker 10s infinite;
+      animation: flicker 8s infinite;
     }
     @keyframes scanline {
       0% { transform: translateY(-100%); }
@@ -85,29 +83,32 @@ const GameStyles = () => (
     }
     .crt-scanline {
       position: absolute;
-      top: 0; left: 0; right: 0; height: 10px;
-      background: rgba(255, 255, 255, 0.05);
-      animation: scanline 4s linear infinite;
+      top: 0; left: 0; right: 0; height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      animation: scanline 6s linear infinite;
       pointer-events: none;
       z-index: 50;
     }
     .crt-overlay {
-      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
-      background-size: 100% 2px, 3px 100%;
+      background: radial-gradient(circle, rgba(0,0,0,0) 60%, rgba(0,0,0,0.6) 100%);
       pointer-events: none;
     }
   `}</style>
 );
 
 const SpookyBackground = () => (
-  <>
-    <div className="absolute inset-0 bg-slate-950 z-[-2]"></div>
-    <div className="fog-layer" style={{ animationDuration: '30s' }}></div>
-    <div className="fog-layer" style={{ animationDuration: '20s', top: '30%', opacity: 0.3, transform: 'scaleX(-1)' }}></div>
-    <div className="absolute inset-0 z-[-1] bg-black/20 cabin-flicker pointer-events-none"></div>
-    <div className="absolute inset-0 z-[50] crt-overlay pointer-events-none"></div>
+  <div className="absolute inset-0 overflow-hidden pointer-events-none">
+    {/* Dark Base */}
+    <div className="absolute inset-0 bg-slate-950 z-0"></div>
+    {/* Fog Layers */}
+    <div className="fog-layer" style={{ animationDuration: '45s', opacity: 0.4 }}></div>
+    <div className="fog-layer" style={{ animationDuration: '25s', top: '-20%', transform: 'scaleX(-1)', opacity: 0.3 }}></div>
+    {/* Flicker Overlay */}
+    <div className="absolute inset-0 z-10 bg-black/10 cabin-flicker mix-blend-multiply"></div>
+    {/* Vignette & Scanlines */}
+    <div className="absolute inset-0 z-20 crt-overlay"></div>
     <div className="crt-scanline"></div>
-  </>
+  </div>
 );
 
 /* -----------------------------------------------------------------------
@@ -125,9 +126,9 @@ const Timer = ({ duration, onComplete, label = "TIME REMAINING" }) => {
   }, [timeLeft, onComplete]);
 
   return (
-    <div className="flex flex-col items-center">
-      <div className="text-xs text-red-400 font-mono tracking-widest mb-1">{label}</div>
-      <div className={`text-3xl font-mono font-bold px-4 py-2 rounded-lg border-2 bg-black/50 ${timeLeft < 10 ? 'text-red-500 border-red-500 animate-pulse' : 'text-slate-200 border-slate-700'}`}>
+    <div className="flex flex-col items-center relative z-30">
+      <div className="text-xs text-red-400 font-mono tracking-widest mb-1 bg-black/80 px-2 rounded">{label}</div>
+      <div className={`text-3xl font-mono font-bold px-4 py-2 rounded-lg border-2 bg-black/80 backdrop-blur-md ${timeLeft < 10 ? 'text-red-500 border-red-500 animate-pulse' : 'text-slate-200 border-slate-700'}`}>
         {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
       </div>
     </div>
@@ -307,14 +308,13 @@ export default function App() {
     const isDebrief = gameState?.status.includes('debrief') || gameState?.status === 'lobby';
     
     if (isDebrief && !isMuted) {
-      audioRef.current.volume = 0.3;
       audioRef.current.play().catch(() => {});
     } else {
       audioRef.current.pause();
     }
   }, [gameState?.status, isMuted, view]);
 
-  // JOIN SOUND EFFECT
+  // JOIN SOUND EFFECT & DUCKING
   const prevPlayerCount = useRef(0);
   useEffect(() => {
       if (view === 'host' && gameState?.status === 'lobby') {
@@ -322,14 +322,24 @@ export default function App() {
           if (count > prevPlayerCount.current) {
               // Play join sound
               if (sfxRef.current) {
+                  // DUCK MUSIC
+                  if (audioRef.current) audioRef.current.volume = 0.1;
+                  
                   sfxRef.current.volume = 1.0;
                   sfxRef.current.currentTime = 0;
-                  sfxRef.current.play().catch(e => console.log("SFX Blocked", e));
+                  sfxRef.current.play()
+                    .then(() => {
+                        // RESTORE MUSIC AFTER SFX
+                        setTimeout(() => {
+                            if (audioRef.current && !isMuted) audioRef.current.volume = 0.3;
+                        }, 1000); // 1s duck
+                    })
+                    .catch(e => console.log("SFX Blocked", e));
               }
           }
           prevPlayerCount.current = count;
       }
-  }, [gameState?.players, view, gameState?.status]);
+  }, [gameState?.players, view, gameState?.status, isMuted]);
 
   // ACTIONS
   const createGame = async () => {
@@ -453,18 +463,28 @@ function HostView({ gameId, gameState, effectAudioRef }) {
   };
 
   const restartGame = async () => {
-    // Reset but keep players
-    // Pick new killer
     const players = gameState.players;
     const killerIndex = Math.floor(Math.random() * players.length);
     const killerUid = players[killerIndex].uid;
     const weapon = WEAPONS[Math.floor(Math.random() * WEAPONS.length)];
 
-    // Reset player roles
+    // FULL RESET FOR PLAYERS
     const updates = players.map(p => {
         const isK = p.uid === killerUid;
         const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
-        return updateDoc(ref, { isMurderer: isK, round1Guess: null, round4Vote: null, hand: [], inbox: [], advantageClue: null, sketchVote: 0, guessesLeft: 5 });
+        return updateDoc(ref, { 
+            isMurderer: isK, 
+            round1Guess: null, 
+            round4Vote: null, 
+            hand: [], 
+            inbox: [], 
+            advantageClue: null, 
+            sketchVote: 0, 
+            guessesLeft: 5,
+            hasSubmittedRound1: false, // CRITICAL: Reset submission flags
+            sketch: null,              // CRITICAL: Clear old sketch
+            tamperedEvidence: false 
+        });
     });
     await Promise.all(updates);
 
@@ -644,7 +664,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
         <div className="text-2xl text-slate-400 relative z-10">Room Code: <span className="text-red-500 font-mono">{gameId}</span></div>
         <div className="grid grid-cols-4 gap-4 w-full max-w-4xl relative z-10">
           {gameState.players.map(p => (
-            <div key={p.uid} className="bg-slate-800/80 p-4 rounded border border-slate-700 flex flex-col items-center backdrop-blur-sm">
+            <div key={p.uid} className="bg-slate-800/80 p-4 rounded border border-slate-700 flex flex-col items-center backdrop-blur-sm animate-in zoom-in">
               <div className="w-12 h-12 bg-black rounded-full mb-2 flex items-center justify-center text-xl">{p.name[0]}</div>
               <span className="font-bold">{p.name}</span>
             </div>
