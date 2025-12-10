@@ -537,15 +537,24 @@ function HostView({ gameId, gameState, effectAudioRef }) {
       for (const p of gameState.players) {
          const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
          const snap = await getDoc(ref);
-         if (snap.data().dossier?.rumor) rumors.push({ id: Math.random().toString(), originalAuthor: p.name, text: snap.data().dossier.rumor });
+         if (snap.exists() && snap.data()?.dossier?.rumor) {
+             rumors.push({ id: Math.random().toString(), originalAuthor: p.name, text: snap.data().dossier.rumor });
+         }
+      }
+      
+      // Fallback if not enough rumors (e.g. testing)
+      if (rumors.length === 0) {
+          rumors.push({ id: "default1", originalAuthor: "Anonymous", text: "I saw someone lurking outside." });
+          rumors.push({ id: "default2", originalAuthor: "Anonymous", text: "Someone here is lying." });
       }
       
       // 2. Assign 2 rumors to each player's hand
       const updates = gameState.players.map(async (p) => {
-          const hand = [
-              rumors[Math.floor(Math.random() * rumors.length)],
-              rumors[Math.floor(Math.random() * rumors.length)]
-          ];
+          // If less than 2 rumors, repeat them
+          const r1 = rumors[Math.floor(Math.random() * rumors.length)];
+          const r2 = rumors[Math.floor(Math.random() * rumors.length)];
+          
+          const hand = [r1, r2];
           const ref = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`);
           await updateDoc(ref, { hand: hand, inbox: [] });
       });
@@ -915,15 +924,6 @@ function PlayerView({ gameId, gameState, playerState, user }) {
         </div>
       </div>
     );
-  }
-
-  // INTRO VIDEO
-  if (gameState.status === 'intro') {
-      return (
-          <div className="flex items-center justify-center h-screen bg-black text-slate-500">
-              Watching Intro...
-          </div>
-      );
   }
 
   // ROUND 1: 49 PERMUTATIONS
