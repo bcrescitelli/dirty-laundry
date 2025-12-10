@@ -45,6 +45,72 @@ const db = getFirestore(app);
 const appId = "murder-at-the-cabin";
 
 /* -----------------------------------------------------------------------
+  STYLES & ANIMATIONS
+  -----------------------------------------------------------------------
+*/
+const GameStyles = () => (
+  <style>{`
+    @keyframes fog {
+      0% { transform: translateX(-10%); opacity: 0.4; }
+      50% { opacity: 0.6; }
+      100% { transform: translateX(10%); opacity: 0.4; }
+    }
+    .fog-layer {
+      position: absolute;
+      top: 0; left: -50%; width: 200%; height: 100%;
+      background: radial-gradient(circle, rgba(255,255,255,0) 0%, rgba(200,200,200,0.05) 40%, rgba(255,255,255,0) 70%);
+      animation: fog 20s ease-in-out infinite alternate;
+      pointer-events: none;
+      z-index: 0;
+    }
+    @keyframes flicker {
+      0%, 100% { opacity: 1; }
+      3% { opacity: 0.4; }
+      6% { opacity: 1; }
+      7% { opacity: 0.4; }
+      8% { opacity: 1; }
+      9% { opacity: 1; }
+      10% { opacity: 0.1; }
+      11% { opacity: 1; }
+      50% { opacity: 1; }
+      52% { opacity: 0.8; }
+      54% { opacity: 1; }
+    }
+    .cabin-flicker {
+      animation: flicker 10s infinite;
+    }
+    @keyframes scanline {
+      0% { transform: translateY(-100%); }
+      100% { transform: translateY(100%); }
+    }
+    .crt-scanline {
+      position: absolute;
+      top: 0; left: 0; right: 0; height: 10px;
+      background: rgba(255, 255, 255, 0.05);
+      animation: scanline 4s linear infinite;
+      pointer-events: none;
+      z-index: 50;
+    }
+    .crt-overlay {
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.06), rgba(0, 255, 0, 0.02), rgba(0, 0, 255, 0.06));
+      background-size: 100% 2px, 3px 100%;
+      pointer-events: none;
+    }
+  `}</style>
+);
+
+const SpookyBackground = () => (
+  <>
+    <div className="absolute inset-0 bg-slate-950 z-[-2]"></div>
+    <div className="fog-layer" style={{ animationDuration: '30s' }}></div>
+    <div className="fog-layer" style={{ animationDuration: '20s', top: '30%', opacity: 0.3, transform: 'scaleX(-1)' }}></div>
+    <div className="absolute inset-0 z-[-1] bg-black/20 cabin-flicker pointer-events-none"></div>
+    <div className="absolute inset-0 z-[50] crt-overlay pointer-events-none"></div>
+    <div className="crt-scanline"></div>
+  </>
+);
+
+/* -----------------------------------------------------------------------
   UTILITY COMPONENTS
   -----------------------------------------------------------------------
 */
@@ -61,7 +127,7 @@ const Timer = ({ duration, onComplete, label = "TIME REMAINING" }) => {
   return (
     <div className="flex flex-col items-center">
       <div className="text-xs text-red-400 font-mono tracking-widest mb-1">{label}</div>
-      <div className={`text-3xl font-mono font-bold px-4 py-2 rounded-lg border-2 ${timeLeft < 10 ? 'text-red-500 border-red-500 animate-pulse bg-red-950/50' : 'text-slate-200 border-slate-700 bg-black/50'}`}>
+      <div className={`text-3xl font-mono font-bold px-4 py-2 rounded-lg border-2 bg-black/50 ${timeLeft < 10 ? 'text-red-500 border-red-500 animate-pulse' : 'text-slate-200 border-slate-700'}`}>
         {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
       </div>
     </div>
@@ -121,7 +187,7 @@ const AudioRecorder = ({ onSave, label }) => {
           onMouseUp={stopRecording}
           onTouchStart={startRecording}
           onTouchEnd={stopRecording}
-          className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110' : 'bg-slate-700 hover:bg-slate-600'}`}
+          className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110 shadow-[0_0_20px_rgba(220,38,38,0.6)]' : 'bg-slate-700 hover:bg-slate-600'}`}
         >
           <Mic className="w-8 h-8 text-white" />
         </button>
@@ -312,6 +378,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-red-500 selection:text-white overflow-hidden relative">
+      <GameStyles />
       {view === 'host' && (
           <>
             <audio ref={audioRef} src="/music.mp3" loop />
@@ -321,7 +388,7 @@ export default function App() {
       
       {/* Volume Toggle */}
       {view === 'host' && (
-        <button onClick={() => setIsMuted(!isMuted)} className="absolute top-4 right-4 z-50 p-2 bg-slate-800 rounded-full border border-slate-600">
+        <button onClick={() => setIsMuted(!isMuted)} className="absolute top-4 right-4 z-50 p-2 bg-slate-800 rounded-full border border-slate-600 hover:bg-slate-700 transition-colors">
           {isMuted ? <VolumeX className="w-4 h-4 text-slate-400" /> : <Volume2 className="w-4 h-4 text-green-400" />}
         </button>
       )}
@@ -338,19 +405,20 @@ function HomeScreen({ onCreate, onJoin, error }) {
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen p-6 max-w-md mx-auto w-full text-center">
-      <div className="mb-8">
-        <ShieldAlert className="w-16 h-16 text-red-600 mx-auto mb-4" />
-        <h1 className="text-4xl font-serif font-bold mb-2">MURDER AT THE CABIN</h1>
+    <div className="flex flex-col items-center justify-center min-h-screen p-6 max-w-md mx-auto w-full text-center relative overflow-hidden">
+      <SpookyBackground />
+      <div className="mb-8 relative z-10">
+        <ShieldAlert className="w-16 h-16 text-red-600 mx-auto mb-4 drop-shadow-[0_0_15px_rgba(220,38,38,0.8)]" />
+        <h1 className="text-4xl font-serif font-bold mb-2 text-white drop-shadow-md">MURDER AT THE CABIN</h1>
         <p className="text-slate-400">7 Suspects. 1 Killer. 49 Permutations.</p>
       </div>
-      <div className="w-full space-y-4 bg-slate-900 p-6 rounded-xl border border-slate-800">
-        <input type="text" placeholder="ROOM CODE" value={code} onChange={e => setCode(e.target.value.toUpperCase())} className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-center text-xl tracking-widest outline-none focus:border-red-500" />
-        <input type="text" placeholder="YOUR NAME" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded p-3 text-center outline-none focus:border-red-500" />
-        <button onClick={() => name && code && onJoin(code, name)} className="w-full bg-red-600 text-white font-bold py-3 rounded hover:bg-red-700">ENTER CABIN</button>
+      <div className="w-full space-y-4 bg-slate-900/80 p-6 rounded-xl border border-slate-800 relative z-10 backdrop-blur-sm">
+        <input type="text" placeholder="ROOM CODE" value={code} onChange={e => setCode(e.target.value.toUpperCase())} className="w-full bg-slate-950/50 border border-slate-700 rounded p-3 text-center text-xl tracking-widest outline-none focus:border-red-500 transition-colors" />
+        <input type="text" placeholder="YOUR NAME" value={name} onChange={e => setName(e.target.value)} className="w-full bg-slate-950/50 border border-slate-700 rounded p-3 text-center outline-none focus:border-red-500 transition-colors" />
+        <button onClick={() => name && code && onJoin(code, name)} className="w-full bg-red-600 text-white font-bold py-3 rounded hover:bg-red-700 transition-all active:scale-95">ENTER CABIN</button>
         {error && <p className="text-red-500 text-sm">{error}</p>}
       </div>
-      <button onClick={onCreate} className="text-slate-500 text-sm hover:text-white mt-4">Host New Game (TV Mode)</button>
+      <button onClick={onCreate} className="text-slate-500 text-sm hover:text-white mt-4 relative z-10">Host New Game (TV Mode)</button>
     </div>
   );
 }
@@ -570,19 +638,20 @@ function HostView({ gameId, gameState, effectAudioRef }) {
   
   if (gameState.status === 'lobby') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 space-y-8">
-        <h1 className="text-6xl font-serif font-bold text-slate-100">THE CABIN</h1>
-        <div className="text-2xl text-slate-400">Room Code: <span className="text-red-500 font-mono">{gameId}</span></div>
-        <div className="grid grid-cols-4 gap-4 w-full max-w-4xl">
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 space-y-8 relative overflow-hidden">
+        <SpookyBackground />
+        <h1 className="text-6xl font-serif font-bold text-slate-100 relative z-10 drop-shadow-[0_0_10px_rgba(220,38,38,0.8)]">THE CABIN</h1>
+        <div className="text-2xl text-slate-400 relative z-10">Room Code: <span className="text-red-500 font-mono">{gameId}</span></div>
+        <div className="grid grid-cols-4 gap-4 w-full max-w-4xl relative z-10">
           {gameState.players.map(p => (
-            <div key={p.uid} className="bg-slate-800 p-4 rounded border border-slate-700 flex flex-col items-center">
+            <div key={p.uid} className="bg-slate-800/80 p-4 rounded border border-slate-700 flex flex-col items-center backdrop-blur-sm">
               <div className="w-12 h-12 bg-black rounded-full mb-2 flex items-center justify-center text-xl">{p.name[0]}</div>
               <span className="font-bold">{p.name}</span>
             </div>
           ))}
         </div>
         {gameState.players.length > 0 && (
-          <button onClick={startGame} className="bg-red-600 text-white text-2xl font-bold px-12 py-4 rounded-full shadow-lg hover:bg-red-700">START NIGHT</button>
+          <button onClick={startGame} className="bg-red-600 text-white text-2xl font-bold px-12 py-4 rounded-full shadow-lg hover:bg-red-700 relative z-10 hover:scale-105 transition-all">START NIGHT</button>
         )}
       </div>
     );
@@ -604,12 +673,13 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 
   if (gameState.status === 'round1') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 p-8">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-3xl font-serif font-bold">ROUND 1: EVIDENCE REPORT</h2>
+      <div className="flex flex-col h-screen bg-slate-900 p-8 relative overflow-hidden animate-in fade-in duration-1000">
+        <SpookyBackground />
+        <div className="flex justify-between items-center mb-8 relative z-10">
+          <h2 className="text-3xl font-serif font-bold drop-shadow-md">ROUND 1: EVIDENCE REPORT</h2>
           <Timer duration={90} onComplete={calculateRound1Stats} />
         </div>
-        <div className="flex-1 flex items-center justify-center">
+        <div className="flex-1 flex items-center justify-center relative z-10">
           <div className="text-center space-y-4">
             <p className="text-2xl text-slate-300">Detectives are analyzing the 49 Permutations...</p>
             <div className="grid grid-cols-7 gap-2 opacity-50">
@@ -627,16 +697,17 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 
   if (gameState.status === 'round1_results') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 space-y-8">
-        <h2 className="text-5xl font-serif font-bold mb-8">CASE UPDATE</h2>
-        <div className="grid grid-cols-2 gap-8 w-full max-w-4xl">
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 space-y-8 relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-5xl font-serif font-bold mb-8 relative z-10">CASE UPDATE</h2>
+        <div className="grid grid-cols-2 gap-8 w-full max-w-4xl relative z-10">
           <ResultCard label="Perfect Match (Killer & Weapon)" value={gameState.roundStats?.perfect || 0} color="text-green-500" />
           <ResultCard label="Right Killer, Wrong Weapon" value={gameState.roundStats?.killerOnly || 0} color="text-yellow-500" />
           <ResultCard label="Wrong Killer, Right Weapon" value={gameState.roundStats?.weaponOnly || 0} color="text-yellow-500" />
           <ResultCard label="Completely Cold" value={gameState.roundStats?.wrong || 0} color="text-red-500" />
         </div>
-        <div className="flex gap-4 mt-8">
-          <button onClick={() => advance('debrief1')} className="bg-slate-700 px-8 py-4 rounded text-xl font-bold">Debrief (4m)</button>
+        <div className="flex gap-4 mt-8 relative z-10">
+          <button onClick={() => advance('debrief1')} className="bg-slate-700 px-8 py-4 rounded text-xl font-bold hover:bg-slate-600">Debrief (4m)</button>
         </div>
       </div>
     );
@@ -644,21 +715,24 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 
   if (gameState.status === 'debrief1' || gameState.status === 'debrief2') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8">
-        <h2 className="text-6xl font-bold text-white mb-4">DEBRIEF</h2>
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-6xl font-bold text-white mb-4 relative z-10 drop-shadow-lg">DEBRIEF</h2>
         {gameState.status === 'debrief2' && gameState.round2WinnerName && (
-            <div className="mb-4 text-green-400 text-xl font-bold uppercase">
+            <div className="mb-4 text-green-400 text-xl font-bold uppercase relative z-10 animate-pulse">
                 Sketch Winner: {gameState.round2WinnerName} (Advantage Sent)
             </div>
         )}
-        <Timer duration={240} onComplete={() => {
-            if (gameState.status === 'debrief1') {
-                advance('round2');
-                setTimeout(setupRound2Audio, 1000); 
-            } else {
-                setupRound3Transcript(); // Generate DB entry BEFORE moving
-            }
-        }} />
+        <div className="relative z-10">
+            <Timer duration={240} onComplete={() => {
+                if (gameState.status === 'debrief1') {
+                    advance('round2');
+                    setTimeout(setupRound2Audio, 1000); 
+                } else {
+                    setupRound3Transcript(); // Generate DB entry BEFORE moving
+                }
+            }} />
+        </div>
         <button onClick={() => {
             if (gameState.status === 'debrief1') {
                 advance('round2');
@@ -666,17 +740,18 @@ function HostView({ gameId, gameState, effectAudioRef }) {
             } else {
                 setupRound3Transcript();
             }
-        }} className="mt-8 bg-red-900/50 text-red-200 px-6 py-2 rounded">SKIP DEBRIEF</button>
+        }} className="mt-8 bg-red-900/50 text-red-200 px-6 py-2 rounded hover:bg-red-800/50 relative z-10">SKIP DEBRIEF</button>
       </div>
     );
   }
 
   if (gameState.status === 'round2') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 p-8">
-        <h2 className="text-3xl font-serif font-bold mb-8">ROUND 2: EYEWITNESS</h2>
-        <div className="flex-1 flex flex-col items-center justify-center space-y-8">
-          <div className="bg-black p-8 rounded-xl border border-slate-700 text-center">
+      <div className="flex flex-col h-screen bg-slate-900 p-8 relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-3xl font-serif font-bold mb-8 relative z-10">ROUND 2: EYEWITNESS</h2>
+        <div className="flex-1 flex flex-col items-center justify-center space-y-8 relative z-10">
+          <div className="bg-black/80 p-8 rounded-xl border border-slate-700 text-center backdrop-blur-sm">
             <Volume2 className="w-16 h-16 text-blue-500 mx-auto mb-4 animate-pulse" />
             <h3 className="text-2xl font-bold">AUDIO EVIDENCE PLAYING</h3>
             <p className="text-slate-500">2 Clips. Slowed down.</p>
@@ -692,10 +767,11 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 
   if (gameState.status === 'round2_lineup') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 p-8 items-center">
-        <h2 className="text-4xl font-serif font-bold mb-4">POLICE LINEUP</h2>
-        <p className="text-slate-400 mb-8">Vote for the most accurate sketch on your devices.</p>
-        <div className="grid grid-cols-4 gap-4 w-full">
+      <div className="flex flex-col h-screen bg-slate-900 p-8 items-center relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-4xl font-serif font-bold mb-4 relative z-10">POLICE LINEUP</h2>
+        <p className="text-slate-400 mb-8 relative z-10">Vote for the most accurate sketch on your devices.</p>
+        <div className="grid grid-cols-4 gap-4 w-full relative z-10">
            {gameState.sketches && gameState.sketches.map((s, i) => (
              <div key={i} className="aspect-square bg-white rounded shadow-lg overflow-hidden relative">
                  <img src={s.url} className="w-full h-full object-cover" />
@@ -703,8 +779,10 @@ function HostView({ gameId, gameState, effectAudioRef }) {
              </div>
            ))}
         </div>
-        <Timer duration={15} onComplete={handleRound2Winner} />
-        <button onClick={handleRound2Winner} className="bg-slate-700 mt-4 px-4 py-2 rounded">End Voting</button>
+        <div className="mt-8 relative z-10">
+            <Timer duration={15} onComplete={handleRound2Winner} />
+            <button onClick={handleRound2Winner} className="bg-slate-700 mt-4 px-4 py-2 rounded">End Voting</button>
+        </div>
       </div>
     );
   }
@@ -713,18 +791,19 @@ function HostView({ gameId, gameState, effectAudioRef }) {
     const puzzle = gameState.round3Data || { phrase: [], revealed: [] };
     
     return (
-      <div className="flex flex-col h-screen bg-slate-900 p-8 items-center justify-center">
-        <h2 className="text-red-500 tracking-widest text-xl mb-4">ROUND 3: THE TRIALS</h2>
-        <div className="bg-black border-2 border-red-900 p-12 rounded-xl max-w-5xl w-full text-center flex flex-wrap justify-center gap-2">
+      <div className="flex flex-col h-screen bg-slate-900 p-8 items-center justify-center relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-red-500 tracking-widest text-xl mb-4 relative z-10">ROUND 3: THE TRIALS</h2>
+        <div className="bg-black/90 border-2 border-red-900 p-12 rounded-xl max-w-5xl w-full text-center flex flex-wrap justify-center gap-2 relative z-10 shadow-[0_0_30px_rgba(220,38,38,0.3)]">
            {puzzle.phrase.map((char, i) => (
                <div key={i} className={`w-12 h-16 border-b-4 text-4xl flex items-center justify-center font-mono ${puzzle.revealed[i] ? 'text-green-400 border-green-600' : 'text-transparent border-slate-600'}`}>
                    {puzzle.revealed[i] ? char : '_'}
                </div>
            ))}
         </div>
-        <div className="mt-8 flex gap-4">
+        <div className="mt-8 flex gap-4 relative z-10">
            <Timer duration={90} onComplete={setupRound4Exchange} />
-           <button onClick={setupRound4Exchange} className="bg-red-600 text-white font-bold px-8 py-4 rounded">START RUMOR MILL</button>
+           <button onClick={setupRound4Exchange} className="bg-red-600 text-white font-bold px-8 py-4 rounded hover:bg-red-700">START RUMOR MILL</button>
         </div>
       </div>
     );
@@ -732,47 +811,53 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 
   if (gameState.status === 'round4_exchange') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8">
-        <h2 className="text-4xl font-bold mb-4">ROUND 4: RUMOR EXCHANGE</h2>
-        <p className="text-slate-400 text-2xl max-w-2xl text-center">Players are sending DM rumors...</p>
-        <button onClick={startDebate} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Start Final Debate</button>
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-4xl font-bold mb-4 relative z-10">ROUND 4: RUMOR EXCHANGE</h2>
+        <p className="text-slate-400 text-2xl max-w-2xl text-center relative z-10">Players are sending DM rumors...</p>
+        <button onClick={startDebate} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold relative z-10">Start Final Debate</button>
       </div>
     );
   }
 
   if (gameState.status === 'round4_debate') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8">
-        <h2 className="text-6xl font-bold mb-4">FINAL DEBATE</h2>
-        <p className="text-slate-400 text-2xl mb-8">Review your DMs. Discuss. 1 Minute.</p>
-        <Timer duration={60} onComplete={() => advance('voting')} />
-        <button onClick={() => advance('voting')} className="mt-8 bg-red-600 px-8 py-3 rounded font-bold">GO TO FINAL VOTE</button>
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-6xl font-bold mb-4 relative z-10">FINAL DEBATE</h2>
+        <p className="text-slate-400 text-2xl mb-8 relative z-10">Review your DMs. Discuss. 1 Minute.</p>
+        <div className="relative z-10">
+            <Timer duration={60} onComplete={() => advance('voting')} />
+            <button onClick={() => advance('voting')} className="mt-8 bg-red-600 px-8 py-3 rounded font-bold">GO TO FINAL VOTE</button>
+        </div>
       </div>
     );
   }
 
   if (gameState.status === 'voting') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 animate-in fade-in">
-        <h2 className="text-5xl font-bold text-white mb-8">FINAL JUDGMENT</h2>
-        <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center animate-pulse mb-8">
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 animate-in fade-in relative overflow-hidden">
+        <SpookyBackground />
+        <h2 className="text-5xl font-bold text-white mb-8 relative z-10">FINAL JUDGMENT</h2>
+        <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center animate-pulse mb-8 relative z-10">
            <Gavel className="w-12 h-12 text-black" />
         </div>
-        <p className="text-slate-400 text-2xl">Cast your votes on your devices.</p>
+        <p className="text-slate-400 text-2xl relative z-10">Cast your votes on your devices.</p>
         <button onClick={() => {
             advance('reveal');
             setTimeout(playRevealAudio, 1000);
-        }} className="mt-12 bg-white text-black font-bold px-8 py-4 rounded-full">REVEAL THE TRUTH</button>
+        }} className="mt-12 bg-white text-black font-bold px-8 py-4 rounded-full relative z-10 hover:scale-105 transition-transform">REVEAL THE TRUTH</button>
       </div>
     );
   }
 
   if (gameState.status === 'reveal') {
     return (
-      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 animate-in zoom-in duration-700">
-        <h1 className="text-7xl font-serif font-bold text-red-600 mb-8">VERDICT</h1>
+      <div className="flex flex-col h-screen bg-slate-900 items-center justify-center p-8 animate-in zoom-in duration-700 relative overflow-hidden">
+        <SpookyBackground />
+        <h1 className="text-7xl font-serif font-bold text-red-600 mb-8 relative z-10 drop-shadow-[0_0_20px_rgba(220,38,38,0.9)]">VERDICT</h1>
         <audio ref={effectAudioRef} />
-        <div className="bg-black p-8 rounded-2xl border-4 border-red-600 text-center">
+        <div className="bg-black/90 p-8 rounded-2xl border-4 border-red-600 text-center relative z-10 max-w-2xl w-full">
            <div className="text-slate-500 uppercase tracking-widest mb-2">The Murderer Was</div>
            {/* Find killer */}
            {gameState.players.filter(p => p.uid === gameState.murdererId).map(k => (
@@ -780,7 +865,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
            ))}
            <div className="text-xl text-red-400">Weapon: {gameState.murderWeapon}</div>
         </div>
-        <button onClick={restartGame} className="mt-12 text-slate-300 font-bold bg-slate-800 px-6 py-3 rounded hover:bg-slate-700">Same Players, New Mystery</button>
+        <button onClick={restartGame} className="mt-12 text-slate-300 font-bold bg-slate-800 px-6 py-3 rounded hover:bg-slate-700 relative z-10">Same Players, New Mystery</button>
       </div>
     );
   }
@@ -789,7 +874,7 @@ function HostView({ gameId, gameState, effectAudioRef }) {
 }
 
 const ResultCard = ({ label, value, color }) => (
-  <div className="bg-slate-800 p-6 rounded-lg text-center">
+  <div className="bg-slate-800/80 p-6 rounded-lg text-center backdrop-blur-sm">
     <div className={`text-6xl font-bold ${color} mb-2`}>{value}</div>
     <div className="text-slate-400 uppercase text-sm font-bold tracking-wider">{label}</div>
   </div>
