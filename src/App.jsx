@@ -827,7 +827,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   if(gameState.status === 'lobby') {
     if(playerState.hasSubmittedDossier) return <div className="h-full flex items-center justify-center text-slate-500 p-8 text-center animate-in"><CheckCircle className="w-20 h-20 text-green-500 mb-6" /><div className="text-2xl font-bold text-white">Dossier Secured.</div><div className="text-sm mt-2 opacity-50">Wait for other detectives...</div></div>;
     return (
-      <div className="p-6 h-full overflow-y-auto pb-32">
+      <div className="p-6 h-full overflow-y-auto pb-32 relative z-10">
         <h2 className="text-2xl font-black mb-6 border-b-2 border-slate-800 pb-4 text-white">INTAKE FORM</h2>
         <div className="space-y-8">
           <div className="bg-slate-800/50 p-4 rounded-lg">
