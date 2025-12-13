@@ -55,6 +55,10 @@ const playDistortedAudio = async (url) => {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const audioCtx = new AudioContext();
     
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    
     const response = await fetch(url);
     const arrayBuffer = await response.arrayBuffer();
     const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
@@ -74,8 +78,8 @@ const playDistortedAudio = async (url) => {
     const wetGain = audioCtx.createGain();
     const effectGain = audioCtx.createGain();
 
-    dryGain.gain.value = 0.4; // Keep some original clarity
-    wetGain.gain.value = 0.6; // Heavy effect layer
+    dryGain.gain.value = 0.4; 
+    wetGain.gain.value = 0.6; 
 
     source.connect(dryGain);
     dryGain.connect(audioCtx.destination);
@@ -221,7 +225,6 @@ const AudioRecorder = ({ onSave, label }) => {
       }, 10000);
     } catch (err) {
       console.error("Mic Error:", err);
-      // Don't alert here to avoid spamming if permission denied globally
     }
   };
 
@@ -318,7 +321,7 @@ const DrawingCanvas = ({ onSave }) => {
     const canvas = canvasRef.current;
     if (canvas) {
       const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#1e293b'; // Slate-800 background
+      ctx.fillStyle = '#1e293b'; 
       ctx.fillRect(0, 0, 300, 300);
       ctx.lineWidth = 4;
       ctx.strokeStyle = 'white';
@@ -327,21 +330,15 @@ const DrawingCanvas = ({ onSave }) => {
   }, []);
 
   const draw = (e) => {
-    // Only draw if primary mouse button is held or touch is active
     if (!e.touches && e.buttons !== 1) return;
-    
-    e.preventDefault(); // Prevent scrolling on touch
+    e.preventDefault(); 
     setHasDrawn(true);
 
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
-    
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    
-    const x = clientX - rect.left;
-    const y = clientY - rect.top;
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
 
     ctx.lineTo(x, y);
     ctx.stroke();
@@ -354,11 +351,10 @@ const DrawingCanvas = ({ onSave }) => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     const rect = canvas.getBoundingClientRect();
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-    
+    const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
     ctx.beginPath();
-    ctx.moveTo(clientX - rect.left, clientY - rect.top);
+    ctx.moveTo(x, y);
   };
 
   return (
@@ -434,17 +430,16 @@ export default function App() {
   useEffect(() => {
     if (!audioRef.current || view !== 'host') return;
     
-    // Mute during video intro or audio evidence playback
     const isPlayingMedia = gameState?.status === 'intro' || gameState?.status === 'audio_playback_active';
     const isQuietRound = ['brainstorm', 'round1_suspect', 'round1_weapon', 'round2', 'round4_exchange'].includes(gameState?.status);
     
     if (isPlayingMedia) {
-        audioRef.current.volume = 0; // Silent
+        audioRef.current.volume = 0; 
     } else {
         audioRef.current.volume = isMuted ? 0 : (isQuietRound ? 0.1 : 0.3);
     }
     
-    audioRef.current.play().catch(() => { /* Auto-play policy handler */ });
+    audioRef.current.play().catch(() => {});
   }, [gameState?.status, isMuted, view]);
 
   const prevPlayerCount = useRef(0);
@@ -452,11 +447,9 @@ export default function App() {
     if (view === 'host' && gameState?.status === 'lobby') {
       const count = gameState.players?.length || 0;
       if (count > prevPlayerCount.current && sfxRef.current && !isMuted) {
-        // AGGRESSIVE DUCKING: Silence music completely
-        audioRef.current.volume = 0; 
+        audioRef.current.volume = 0.05; 
         sfxRef.current.currentTime = 0;
         sfxRef.current.play().then(() => {
-          // Restore volume after sound effect finishes (approx 1.5s)
           setTimeout(() => { 
             if (audioRef.current && !isMuted) audioRef.current.volume = 0.3; 
           }, 1500);
@@ -497,7 +490,6 @@ export default function App() {
       return; 
     }
     
-    // Create Player Profile
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${cleanCode}_${user.uid}`), {
       uid: user.uid,
       name,
@@ -517,7 +509,6 @@ export default function App() {
       finalVote: null
     });
 
-    // Add to Player List
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', cleanCode), {
       players: arrayUnion({uid: user.uid, name})
     });
@@ -538,8 +529,8 @@ export default function App() {
         </>
       )}
       
-      {/* Global Background Effects (Fog, Scanlines) */}
-      {view !== 'home' && <SpookyBackground />}
+      {/* Strip effects for players to ensure visibility, show for Host/Home */}
+      {view !== 'player' && <SpookyBackground />}
       
       {view === 'home' && <HomeScreen onCreate={createGame} onJoin={joinGame} error={error} />}
       {view === 'host' && gameState && <HostView gameId={gameId} gameState={gameState} />}
@@ -641,7 +632,7 @@ const HostView = ({ gameId, gameState }) => {
       if(d.data().submittedWeapons) weapons.push(...d.data().submittedWeapons);
     }
     if(weapons.length < 5) weapons = [...weapons, ...DEFAULT_WEAPONS];
-    weapons = [...new Set(weapons)].sort(()=>0.5-Math.random()).slice(0, 15); // Up to 15 unique
+    weapons = [...new Set(weapons)].sort(()=>0.5-Math.random()).slice(0, 15); 
     
     const kIndex = Math.floor(Math.random() * gameState.players.length);
     const kUid = gameState.players[kIndex].uid;
@@ -665,14 +656,13 @@ const HostView = ({ gameId, gameState }) => {
   };
 
   const playEvidenceAudio = async () => {
-    setStatus('audio_playback_active'); // Mutes BG music
+    setStatus('audio_playback_active'); 
     const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId).sort(()=>0.5-Math.random());
-    // Get 2 unique clips
     const clips = [];
     for(const p of innocents) {
         if(clips.length >= 2) break;
         const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
-        if(d.data().dossier?.descAudio) clips.push(d.data().dossier.descAudio);
+        if(d.data().dossier?.descriptionAudio) clips.push(d.data().dossier.descriptionAudio);
     }
 
     if(clips[0]) await playDistortedAudio(clips[0]);
@@ -680,7 +670,7 @@ const HostView = ({ gameId, gameState }) => {
         await new Promise(r => setTimeout(r, 1000));
         await playDistortedAudio(clips[1]);
     }
-    setStatus('round2'); // Return to sketching state (unmutes music)
+    setStatus('round2'); 
   };
 
   const setupLineup = async () => {
@@ -693,7 +683,6 @@ const HostView = ({ gameId, gameState }) => {
   };
 
   const handleRound2Winner = async () => {
-      // Pick random winner for demo
       const winner = gameState.players[Math.floor(Math.random() * gameState.players.length)];
       const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId && p.uid !== winner.uid);
       const revealedInnocent = innocents[Math.floor(Math.random() * innocents.length)];
@@ -707,9 +696,9 @@ const HostView = ({ gameId, gameState }) => {
 
   const setupTranscript = async () => {
     const kDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${gameState.murdererId}`));
-    const text = (kDoc.data().dossier?.neighbor || "THE LAKE HOUSE").toUpperCase();
+    const text = (kDoc.data().dossier?.neighborOpinion || "THE LAKE HOUSE").toUpperCase();
     const phrase = text.split('').map(c => ({ char: c, revealed: c===' ' || Math.random() < 0.3 })); 
-    advance('role_reveal'); // NEW STEP
+    advance('role_reveal'); 
   };
 
   const setupRumors = async () => {
@@ -718,11 +707,14 @@ const HostView = ({ gameId, gameState }) => {
       const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
       if(d.data().dossier?.rumor) rumors.push({ text: d.data().dossier.rumor, author: p.name });
     }
-    if(rumors.length<2) rumors = [{text:"I saw blood.", author:"Anon"}, {text:"He is lying.", author:"Anon"}];
+    if(rumors.length<2) {
+      rumors.push({text: "I saw someone washing blood off their hands.", author: "Anon"});
+      rumors.push({text: "They were arguing loudly before the lights went out.", author: "Anon"});
+    }
     
     await Promise.all(gameState.players.map(async p => {
-      const r1 = rumors[Math.floor(Math.random()*rumors.length)];
-      const r2 = rumors[Math.floor(Math.random()*rumors.length)];
+      const r1 = rumors[Math.floor(Math.random() * rumors.length)];
+      const r2 = rumors[Math.floor(Math.random() * rumors.length)];
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`), { hand: [r1, r2], inbox: [] });
     }));
     advance('round4_exchange');
@@ -738,18 +730,14 @@ const HostView = ({ gameId, gameState }) => {
         wVotes[v.weapon] = (wVotes[v.weapon] || 0) + 1;
       }
     }
-    
-    // Simple Majority Check
     const topSuspect = Object.keys(votes).reduce((a, b) => votes[a] > votes[b] ? a : b, null);
     const topWeapon = Object.keys(wVotes).reduce((a, b) => wVotes[a] > wVotes[b] ? a : b, null);
     
-    // Logic update: Majority MUST match exactly.
     const caught = topSuspect === gameState.murdererId && topWeapon === gameState.murderWeapon;
     advance('reveal', { caught });
   };
 
   const restart = async () => {
-    // HARD RESET of all player operational data, keeping only UID/Name
     await Promise.all(gameState.players.map(p => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`), {
       uid: p.uid, name: p.name, dossier: {}, score: 0, hand: [], inbox: [],
       hasSubmittedDossier: false, submittedWeapons: [], r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null
@@ -776,7 +764,7 @@ const HostView = ({ gameId, gameState }) => {
 
   if(gameState.status === 'lineup') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-6xl font-bold mb-12">SKETCH VOTING</h2><div className="flex flex-wrap justify-center gap-6">{gameState.sketches.map((s,i)=><img key={i} src={s.url} className="w-48 h-48 bg-white object-cover border-4 border-white shadow-xl rotate-1"/>)}</div><Timer duration={45} onComplete={handleRound2Winner}/></div>;
 
-  if(gameState.status === 'debrief2') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-7xl font-black mb-4">DEBRIEF</h2>{gameState.round2WinnerName && <div className="text-3xl text-green-400 mb-8 font-bold">WINNER: {gameState.round2WinnerName}</div>}<Timer duration={240} onComplete={setupTranscript}/><button onClick={setupTranscript} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip</button></div>;
+  if(gameState.status === 'debrief2') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-7xl font-black mb-4">DEBRIEF</h2>{gameState.round2WinnerName && <div className="text-3xl text-green-400 mb-8 font-bold">WINNER: {gameState.round2WinnerName} (Advantage Sent)</div>}<Timer duration={240} onComplete={setupTranscript}/><button onClick={setupTranscript} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip</button></div>;
 
   if(gameState.status === 'role_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-10 bg-black"><h1 className="text-8xl font-black text-white mb-8 animate-pulse">CHECK YOUR PHONE</h1><Timer duration={15} onComplete={()=>advance('round3')}/></div>;
 
@@ -827,7 +815,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   if(gameState.status === 'lobby') {
     if(playerState.hasSubmittedDossier) return <div className="h-full flex items-center justify-center text-slate-500 p-8 text-center animate-in"><CheckCircle className="w-20 h-20 text-green-500 mb-6" /><div className="text-2xl font-bold text-white">Dossier Secured.</div><div className="text-sm mt-2 opacity-50">Wait for other detectives...</div></div>;
     return (
-      <div className="p-6 h-full overflow-y-auto pb-32 relative z-10">
+      <div className="p-6 h-full overflow-y-auto pb-32">
         <h2 className="text-2xl font-black mb-6 border-b-2 border-slate-800 pb-4 text-white">INTAKE FORM</h2>
         <div className="space-y-8">
           <div className="bg-slate-800/50 p-4 rounded-lg">
@@ -836,10 +824,10 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
           </div>
           <div className="bg-slate-800/50 p-4 rounded-lg">
             <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Opinion on neighbor (left)</label>
-            <input className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="Be honest..." onChange={e=>setForm({...form, neighbor: e.target.value})} />
+            <input className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="Be honest..." onChange={e=>setForm({...form, neighborOpinion: e.target.value})} />
           </div>
-          <AudioRecorder label="Describe the Murderer" onSave={d=>setForm({...form, descAudio: d})} />
-          <AudioRecorder label="Say: 'You'll Never Take Me!'" onSave={d=>setForm({...form, impAudio: d})} />
+          <AudioRecorder label="Describe the Murderer" onSave={d=>setForm({...form, descriptionAudio: d})} />
+          <AudioRecorder label="Say: 'You'll Never Take Me!'" onSave={d=>setForm({...form, impressionAudio: d})} />
           <CameraCapture onSave={d=>setForm({...form, mugshot: d})} />
           <button disabled={!form.mugshot} onClick={()=>send({ dossier: form, hasSubmittedDossier: true })} className="w-full bg-red-600 py-5 rounded-xl font-black text-lg mt-4 shadow-lg active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100">SUBMIT DOSSIER</button>
         </div>
