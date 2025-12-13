@@ -613,10 +613,12 @@ const HostView = ({ gameId, gameState }) => {
       const snaps = await Promise.all(gameState.players.map(p => getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`))));
       const data = snaps.map(s => s.data());
 
+      // Auto-advance logic for rounds that rely on player submissions
       if (gameState.status === 'brainstorm' && data.every(p => p?.hasSubmittedWeapons)) finishBrainstorm();
       if (gameState.status === 'round1_suspect' && data.every(p => p?.r1Suspect)) advance('round1_weapon');
       if (gameState.status === 'round1_weapon' && data.every(p => p?.r1Weapon)) calculateR1Stats();
       if (gameState.status === 'round2' && data.every(p => p?.sketch)) setupLineup();
+      if (gameState.status === 'round4_exchange' && data.every(p => p?.finishedExchange)) advance('round4_debate');
       if (gameState.status === 'voting' && data.every(p => p?.finalVote)) checkWinner();
     };
     const i = setInterval(check, 2000);
@@ -662,7 +664,7 @@ const HostView = ({ gameId, gameState }) => {
     for(const p of innocents) {
         if(clips.length >= 2) break;
         const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
-        if(d.data().dossier?.descriptionAudio) clips.push(d.data().dossier.descriptionAudio);
+        if(d.data().dossier?.descAudio) clips.push(d.data().dossier.descriptionAudio);
     }
 
     if(clips[0]) await playDistortedAudio(clips[0]);
@@ -770,7 +772,7 @@ const HostView = ({ gameId, gameState }) => {
 
   if(gameState.status === 'round3') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-5xl font-bold mb-12 text-red-500 tracking-widest">DECODE THE TRANSCRIPT</h2><div className="flex flex-wrap gap-2 justify-center max-w-6xl">{gameState.puzzle.map((l,i)=><div key={i} className={`w-12 h-16 flex items-center justify-center text-4xl border-b-4 ${l.revealed?'text-green-500 border-green-500':'text-transparent border-slate-700'}`}>{l.revealed?l.char:''}</div>)}</div><div className="mt-12"><Timer duration={90} onComplete={setupRumors}/></div><button onClick={setupRumors} className="mt-6 bg-red-600 px-8 py-3 rounded font-bold">Start Rumors</button></div>;
 
-  if(gameState.status === 'round4_exchange') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-6xl font-bold mb-4">RUMOR MILL</h2><p className="text-3xl text-slate-400">Tampering in progress...</p></div>;
+  if(gameState.status === 'round4_exchange') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-6xl font-bold mb-4">RUMOR MILL</h2><p className="text-3xl text-slate-400">Tampering in progress...</p><button onClick={()=>advance('round4_debate')} className="mt-8 bg-slate-700 px-6 py-2 rounded">Force Debate</button></div>;
   if(gameState.status === 'round4_debate') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-7xl font-black mb-8">FINAL ARGUMENTS</h2><Timer duration={60} onComplete={()=>advance('voting')}/><button onClick={()=>advance('voting')} className="mt-12 bg-red-600 px-12 py-4 text-2xl rounded-full font-bold shadow-lg">VOTE NOW</button></div>;
 
   if(gameState.status === 'voting') return <div className="h-full flex flex-col items-center justify-center relative z-10"><h2 className="text-7xl font-black mb-8 text-red-500">FINAL JUDGMENT</h2><div className="grid grid-cols-4 gap-4 w-full max-w-6xl mb-8">{gameState.players.map(p=><div key={p.uid} className="flex flex-col items-center"><img src={mugshots[p.uid]} className="w-24 h-24 rounded-full object-cover border-2 border-slate-600 mb-2"/><div className="font-bold">{p.name}</div></div>)}</div><p className="text-2xl text-slate-400">Cast your votes.</p></div>;
@@ -785,7 +787,7 @@ const HostView = ({ gameId, gameState }) => {
            <div className="text-4xl text-red-500 font-bold">Weapon: {gameState.murderWeapon}</div>
          </div>
       ))}
-      <button onClick={restart} className="mt-12 bg-slate-800 px-8 py-3 rounded text-xl font-bold hover:bg-slate-700">New Mystery</button>
+      <button onClick={restart} className="mt-16 bg-slate-800 px-10 py-4 rounded-full text-2xl font-bold hover:bg-slate-700 border border-slate-500">New Mystery</button>
     </div>
   );
 
@@ -803,6 +805,11 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   const [cardIdx, setCardIdx] = useState(0);
   const [targetId, setTargetId] = useState("");
   const [waiting, setWaiting] = useState(false);
+
+  // RESET WAITING ON ROUND CHANGE
+  useEffect(() => {
+    setWaiting(false);
+  }, [gameState.status]);
 
   const send = async (d) => { setWaiting(true); await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), d); };
 
@@ -824,7 +831,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
           </div>
           <div className="bg-slate-800/50 p-4 rounded-lg">
             <label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Opinion on neighbor (left)</label>
-            <input className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="Be honest..." onChange={e=>setForm({...form, neighborOpinion: e.target.value})} />
+            <input className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="Be honest..." onChange={e=>setForm({...form, neighbor: e.target.value})} />
           </div>
           <AudioRecorder label="Describe the Murderer" onSave={d=>setForm({...form, descriptionAudio: d})} />
           <AudioRecorder label="Say: 'You'll Never Take Me!'" onSave={d=>setForm({...form, impressionAudio: d})} />
@@ -909,6 +916,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
 
   // RUMOR MILL
   if(gameState.status === 'round4_exchange') {
+      // Re-sync rumor text
       const currentCard = playerState.hand && playerState.hand[cardIdx];
       if(!currentCard) return <div className="h-full flex items-center justify-center text-slate-500">Waiting for cards...</div>;
       return (
