@@ -17,7 +17,7 @@ import {
 import { 
   Users, Clock, ShieldAlert, FileText, Send, Lock, Zap, ArrowRight, 
   Eye, Volume2, VolumeX, Mic, Play, Pause, Gavel, ThumbsUp, Mail, 
-  CheckCircle, XCircle, Camera, Skull, Ghost, AlertTriangle, RefreshCw, Edit3, SkipForward
+  CheckCircle, XCircle, Camera, Skull, Ghost, AlertTriangle, RefreshCw, Edit3
 } from 'lucide-react';
 
 /* -----------------------------------------------------------------------
@@ -53,6 +53,8 @@ const playDistortedAudio = async (url) => {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     const audioCtx = new AudioContext();
+    
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
     
     const response = await fetch(url);
     const arrayBuffer = await response.arrayBuffer();
@@ -96,6 +98,9 @@ const playDistortedAudio = async (url) => {
     });
   } catch (e) {
     console.error("Audio distortion failed", e);
+    // Fallback: Try playing normal audio if context fails
+    const audio = new Audio(url);
+    audio.play();
   }
 };
 
@@ -430,11 +435,9 @@ export default function App() {
     if (view === 'host' && gameState?.status === 'lobby') {
       const count = gameState.players?.length || 0;
       if (count > prevPlayerCount.current && sfxRef.current && !isMuted) {
-        // AGGRESSIVE DUCKING: Silence music completely
         audioRef.current.volume = 0; 
         sfxRef.current.currentTime = 0;
         sfxRef.current.play().then(() => {
-          // Restore volume after sound effect finishes (approx 1.5s)
           setTimeout(() => { 
             if (audioRef.current && !isMuted) audioRef.current.volume = 0.3; 
           }, 1500);
@@ -507,7 +510,14 @@ const HomeScreen = ({ onCreate, onJoin, error }) => {
   return (
     <div className="flex flex-col items-center justify-center h-full p-4 relative z-10 text-center">
       <ShieldAlert className="w-24 h-24 text-red-600 mb-6 drop-shadow-[0_0_25px_rgba(220,38,38,0.8)] animate-pulse" />
-      <h1 className="text-7xl font-black text-white mb-2 drop-shadow-lg tracking-tighter">MURDER<br/><span className="text-red-600">AT THE CABIN</span></h1>
+      <h1 className="text-7xl font-black text-white mb-2 drop-shadow-lg tracking-tighter">
+        MURDER<br/>
+        <span className="text-red-600">AT THE CABIN</span>
+      </h1>
+      <p className="text-slate-400 mb-12 max-w-md mx-auto text-lg font-mono">
+        One Killer. Seven Suspects. Infinite Permutations.
+      </p>
+      
       <div className="bg-slate-900/80 p-8 rounded-2xl border border-slate-700 w-full max-w-sm backdrop-blur-md shadow-2xl mt-8">
         <input 
           className="w-full bg-black/50 p-4 rounded-lg mb-3 text-center border border-slate-600 font-mono text-2xl uppercase" 
@@ -699,7 +709,7 @@ const HostView = ({ gameId, gameState }) => {
       hasSubmittedDossier: false, submittedWeapons: [], r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null
     })));
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
-      status: 'lobby', possibleWeapons: [], murderWeapon: '', roundStats: {}, sketches: [], round3Data: null
+      status: 'lobby', possibleWeapons: [], murderWeapon: '', roundStats: {}, sketches: [], puzzle: null
     });
   };
 
@@ -714,18 +724,20 @@ const HostView = ({ gameId, gameState }) => {
 
   if(gameState.status === 'round1_weapon') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-8 text-blue-500 drop-shadow-lg">WHAT DID THEY USE?</h2><div className="flex flex-wrap justify-center gap-4 max-w-6xl">{gameState.possibleWeapons.map(w=><div key={w} className="bg-slate-800 px-6 py-3 rounded-full text-xl border border-slate-600">{w}</div>)}</div></div>;
 
-  if(gameState.status === 'debrief1') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">RESULTS</h2><div className="flex gap-8 mb-12"><div className="text-center"><div className="text-8xl font-black text-green-500">{gameState.r1Stats.perfect}</div><div>PERFECT</div></div><div className="text-center"><div className="text-8xl font-black text-yellow-500">{gameState.r1Stats.kOnly + gameState.r1Stats.wOnly}</div><div>PARTIAL</div></div><div className="text-center"><div className="text-8xl font-black text-red-500">{gameState.r1Stats.wrong}</div><div>WRONG</div></div></div><Timer duration={240} onComplete={()=>{advance('round2');}}/><button onClick={()=>{advance('round2');}} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip Debrief</button></div>;
+  if(gameState.status === 'debrief1') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">RESULTS</h2><div className="flex gap-8 mb-12"><div className="text-center"><div className="text-8xl font-black text-green-500">{gameState.r1Stats.perfect}</div><div>PERFECT</div></div><div className="text-center"><div className="text-8xl font-black text-yellow-500">{gameState.r1Stats.kOnly + gameState.r1Stats.wOnly}</div><div>PARTIAL</div></div><div className="text-center"><div className="text-8xl font-black text-red-500">{gameState.r1Stats.wrong}</div><div>WRONG</div></div></div><Timer duration={240} onComplete={()=>{advance('round2'); setTimeout(playEvidenceAudio,1000);}}/><button onClick={()=>{advance('round2'); setTimeout(playEvidenceAudio,1000);}} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip Debrief</button></div>;
 
   if(gameState.status === 'round2') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-8">EYEWITNESS AUDIO</h2><div className="bg-black/80 p-12 rounded-full border-4 border-slate-700 animate-pulse"><Volume2 className="w-32 h-32 text-blue-500"/></div><button onClick={playEvidenceAudio} className="mt-8 bg-red-600 px-8 py-3 rounded font-bold text-white text-xl">PLAY EVIDENCE TAPE</button></div>;
   if(gameState.status === 'audio_playback_active') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-8 text-red-500 animate-pulse">PLAYING EVIDENCE...</h2><div className="bg-red-900/50 p-12 rounded-full border-4 border-red-500"><Volume2 className="w-32 h-32 text-white"/></div><button onClick={finishAudio} className="mt-8 text-slate-500 underline">Done Playing</button></div>;
 
-  if(gameState.status === 'lineup') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-12">SKETCH VOTING</h2><div className="flex flex-wrap justify-center gap-6">{gameState.sketches?.map((s,i)=><img key={i} src={s.url} className="w-48 h-48 bg-white object-cover border-4 border-white shadow-xl rotate-1"/>) || <div className="text-2xl animate-pulse">Loading Sketches...</div>}</div><Timer duration={45} onComplete={handleRound2Winner}/></div>;
+  if(gameState.status === 'lineup') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-12">SKETCH VOTING</h2><div className="flex flex-wrap justify-center gap-6">{gameState.sketches?.map((s,i)=><img key={i} src={s.url} className="w-48 h-48 bg-white object-cover border-4 border-white shadow-xl rotate-1"/>) || <div className="text-2xl animate-pulse">Loading Sketches...</div>}</div><Timer duration={45} onComplete={handleRound2Winner}/>
+  <button onClick={handleRound2Winner} className="mt-8 bg-slate-800 px-6 py-2 rounded text-slate-400 hover:text-white hover:bg-slate-700">Force End Voting</button>
+  </div>;
 
   if(gameState.status === 'debrief2') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-4">DEBRIEF</h2>{gameState.round2WinnerName && <div className="text-3xl text-green-400 mb-8 font-bold">WINNER: {gameState.round2WinnerName} (Advantage Sent)</div>}<Timer duration={240} onComplete={setupTranscript}/><button onClick={setupTranscript} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip</button></div>;
 
   if(gameState.status === 'role_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-20 bg-black"><h1 className="text-8xl font-black text-white mb-8 animate-pulse">CHECK YOUR PHONE</h1><Timer duration={15} onComplete={()=>advance('round3')}/></div>;
 
-  if(gameState.status === 'round3') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-5xl font-bold mb-12 text-red-500 tracking-widest">DECODE THE TRANSCRIPT</h2><div className="flex flex-wrap gap-2 justify-center max-w-6xl">{gameState.round3Data?.phrase?.map((l,i)=><div key={i} className={`w-12 h-16 flex items-center justify-center text-4xl border-b-4 ${gameState.round3Data.revealed[i]?'text-green-500 border-green-500':'text-transparent border-slate-700'}`}>{gameState.round3Data.revealed[i]?l:''}</div>)}</div><div className="mt-12"><Timer duration={90} onComplete={setupRumors}/></div><button onClick={setupRumors} className="mt-6 bg-red-600 px-8 py-3 rounded font-bold">Start Rumors</button></div>;
+  if(gameState.status === 'round3') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-5xl font-bold mb-12 text-red-500 tracking-widest">DECODE THE TRANSCRIPT</h2><div className="flex flex-wrap gap-2 justify-center max-w-6xl">{gameState.puzzle?.map((l,i)=><div key={i} className={`w-12 h-16 flex items-center justify-center text-4xl border-b-4 ${l.revealed?'text-green-500 border-green-500':'text-transparent border-slate-700'}`}>{l.revealed?l.char:''}</div>)}</div><div className="mt-12"><Timer duration={90} onComplete={setupRumors}/></div><button onClick={setupRumors} className="mt-6 bg-red-600 px-8 py-3 rounded font-bold">Start Rumors</button></div>;
 
   if(gameState.status === 'round4_exchange') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-4">RUMOR MILL</h2><p className="text-3xl text-slate-400">Tampering in progress...</p><button onClick={()=>advance('round4_debate')} className="mt-8 bg-slate-700 px-6 py-2 rounded">Force Debate</button></div>;
   if(gameState.status === 'round4_debate') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">FINAL ARGUMENTS</h2><div className="text-3xl text-slate-400 mb-8">Check your Inbox</div><Timer duration={60} onComplete={()=>advance('voting')}/><button onClick={()=>advance('voting')} className="mt-12 bg-red-600 px-12 py-4 text-2xl rounded-full font-bold shadow-lg">VOTE NOW</button></div>;
@@ -867,15 +879,45 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
 
   // LINEUP VOTE
   if(gameState.status === 'lineup') {
-      if(playerState.sketchVote) return <div className="h-full flex items-center justify-center text-slate-500">Voted.</div>;
-      return (
-        <div className="p-4 grid grid-cols-2 gap-4 h-full overflow-y-auto relative z-30">
-            {sketches.map(s=>(
-                <button key={s.id} onClick={()=>send({ sketchVote: s.id })} className="bg-slate-800 p-1 rounded overflow-hidden">
-                    <img src={s.url} className="w-full h-full aspect-square object-cover"/>
-                </button>
-            ))}
+      if(hasVotedRound2) {
+         return (
+             <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-slate-500 p-4 text-center">
+                 <div>Vote Submitted.</div>
+                 {playerState.advantageClue && (
+                     <div className="mt-4 bg-green-900 p-4 rounded text-green-200 border border-green-700 animate-in slide-in-from-bottom">
+                         <div className="font-bold uppercase text-xs mb-1">Winner Advantage</div>
+                         {playerState.advantageClue}
+                     </div>
+                 )}
+             </div>
+         );
+     }
+     
+     return (
+        <div className="h-screen bg-slate-950 p-4 overflow-y-auto">
+           <h2 className="text-white font-bold mb-4 text-center">VOTE FOR BEST SKETCH</h2>
+           <div className="grid grid-cols-2 gap-4">
+              {sketches.map(s => (
+                  <div key={s.id} onClick={() => submitVote(s.id)} className="bg-white p-1 rounded aspect-square">
+                      <img src={s.url} className="w-full h-full object-cover" />
+                  </div>
+              ))}
+           </div>
         </div>
+     );
+  }
+  
+  if (gameState.status === 'debrief2') {
+      return (
+          <div className="h-screen bg-slate-900 flex flex-col items-center justify-center text-slate-500 p-4 text-center">
+             <div>Debrief in Progress on TV...</div>
+             {playerState.advantageClue && (
+                 <div className="mt-4 bg-green-900 p-4 rounded text-green-200 border border-green-700">
+                     <div className="font-bold uppercase text-xs mb-1">Winner Advantage</div>
+                     {playerState.advantageClue}
+                 </div>
+             )}
+          </div>
       );
   }
 
