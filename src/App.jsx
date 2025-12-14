@@ -45,9 +45,64 @@ const db = getFirestore(app);
 const appId = "murder-at-the-cabin";
 
 /* -----------------------------------------------------------------------
-  UTILITIES
+  AUDIO & VISUAL UTILITIES
   -----------------------------------------------------------------------
 */
+
+const playDistortedAudio = async (url) => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContext();
+    
+    if (audioCtx.state === 'suspended') {
+      await audioCtx.resume();
+    }
+    
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = audioBuffer;
+
+    // Pitch shift (0.8 = deeper voice)
+    source.playbackRate.value = 0.8; 
+
+    // Ring Modulator (Robotic/Metallic Effect)
+    const oscillator = audioCtx.createOscillator();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = 30; 
+    
+    const dryGain = audioCtx.createGain();
+    const wetGain = audioCtx.createGain();
+    const effectGain = audioCtx.createGain();
+
+    dryGain.gain.value = 0.3; 
+    wetGain.gain.value = 0.7; 
+
+    source.connect(dryGain);
+    dryGain.connect(audioCtx.destination);
+
+    source.connect(effectGain);
+    oscillator.connect(effectGain.gain);
+    effectGain.connect(wetGain);
+    wetGain.connect(audioCtx.destination);
+
+    oscillator.start();
+    source.start();
+    
+    return new Promise((resolve) => {
+      source.onended = () => {
+        oscillator.stop();
+        audioCtx.close();
+        resolve();
+      };
+    });
+  } catch (e) {
+    console.error("Audio distortion failed", e);
+  }
+};
+
 const resizeImage = (file, maxWidth = 300) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -160,7 +215,7 @@ const AudioRecorder = ({ onSave, label }) => {
     <div className="flex flex-col items-center gap-2 p-4 bg-slate-800 rounded-lg border border-slate-700 w-full shadow-lg">
       <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">{label}</div>
       {!audioData ? (
-        <button onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110' : 'bg-slate-600 hover:bg-slate-500'}`}><Mic className="w-8 h-8 text-white" /></button>
+        <button onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110 shadow-[0_0_25px_rgba(220,38,38,0.8)]' : 'bg-slate-600 hover:bg-slate-500'}`}><Mic className="w-8 h-8 text-white" /></button>
       ) : (
         <div className="flex flex-col items-center animate-in">
           <div className="w-20 h-20 rounded-full bg-green-900 border-2 border-green-500 flex items-center justify-center mb-2"><CheckCircle className="w-8 h-8 text-green-400" /></div>
@@ -221,7 +276,8 @@ const DrawingCanvas = ({ onSave }) => {
     const rect = canvas.getBoundingClientRect();
     const x = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
     const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
-    ctx.beginPath(); ctx.moveTo(x, y);
+    ctx.beginPath();
+    ctx.moveTo(x, y);
   };
   return (
     <div className="flex flex-col gap-4 w-full items-center">
@@ -247,64 +303,40 @@ export default function App() {
   const audioRef = useRef(null); 
   const sfxRef = useRef(null);
 
-  // Authentication & Reconnection
+  // Auth
   useEffect(() => {
-    const init = async () => { 
-      try { 
-          await signInAnonymously(auth); 
-      } 
-      catch(e) { setError("Auth Error"); } 
-    };
+    const init = async () => { try { await signInAnonymously(auth); } catch(e) { setError("Auth Error"); } };
     init();
-    const unsub = onAuthStateChanged(auth, async (u) => {
-        setUser(u);
-        if (u) {
-            // Attempt Reconnection
-            const savedGame = localStorage.getItem('murder_cabin_game');
-            if (savedGame && !gameId) {
-                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'games', savedGame);
-                const gSnap = await getDoc(gameRef);
-                if (gSnap.exists()) {
-                    setGameId(savedGame);
-                    if (gSnap.data().hostId === u.uid) setView('host');
-                    else setView('player');
-                }
-            }
-        }
-    });
-    return () => unsub();
+    onAuthStateChanged(auth, setUser);
   }, []);
 
-  // Global Game Listener
+  // Listeners
   useEffect(() => {
     if (!user || !gameId) return;
-    const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), (snap) => {
+    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), (snap) => {
       if (snap.exists()) setGameState(snap.data());
       else setError("Game ID not found.");
     });
-    return () => unsub();
   }, [user, gameId]);
 
-  // Private Player Listener
   useEffect(() => {
     if (!user || !gameId || view !== 'player') return;
-    const unsub = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), (snap) => {
+    return onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), (snap) => {
       if (snap.exists()) setPlayerState(snap.data());
     });
-    return () => unsub();
   }, [user, gameId, view]);
 
-  // Music & SFX Logic
+  // Music & SFX
   useEffect(() => {
     if (!audioRef.current || view !== 'host') return;
-    const isPlayingMedia = gameState?.status === 'intro';
+    const isPlayingMedia = gameState?.status === 'intro' || gameState?.status === 'audio_playback_active';
+    const isQuietRound = ['brainstorm', 'round1_suspect', 'round1_weapon', 'round2', 'round4_exchange'].includes(gameState?.status);
     
     if (isPlayingMedia) {
         audioRef.current.pause(); 
     } else {
         if (audioRef.current.paused) audioRef.current.play().catch(()=>{});
-        const isQuiet = ['brainstorm', 'round1_suspect', 'round1_weapon', 'round2', 'round4_exchange'].includes(gameState?.status);
-        audioRef.current.volume = isMuted ? 0 : (isQuiet ? 0.1 : 0.3);
+        audioRef.current.volume = isMuted ? 0 : (isQuietRound ? 0.1 : 0.3);
     }
   }, [gameState?.status, isMuted, view]);
 
@@ -340,7 +372,6 @@ export default function App() {
       createdAt: new Date().toISOString()
     };
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', code), initialGameState);
-    localStorage.setItem('murder_cabin_game', code);
     setGameId(code);
     setView('host');
   };
@@ -353,7 +384,7 @@ export default function App() {
     
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${cleanCode}_${user.uid}`), {
       uid: user.uid, name, dossier: {}, roleName: 'TBD', isMurderer: false, hasSubmittedDossier: false,
-      score: 0, hand: [], inbox: [], advantageClue: null, guessesLeft: 5, submittedWeapons: [], 
+      score: 0, hand: [], inbox: [], advantageClue: null, submittedWeapons: [], 
       r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null
     });
 
@@ -361,7 +392,6 @@ export default function App() {
       players: arrayUnion({uid: user.uid, name})
     });
 
-    localStorage.setItem('murder_cabin_game', cleanCode);
     setGameId(cleanCode);
     setView('player');
   };
@@ -372,7 +402,6 @@ export default function App() {
     <div className="h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden relative selection:bg-red-900 selection:text-white">
       <GameStyles />
       {view === 'host' && <><audio ref={audioRef} src="/music.mp3" loop /><audio ref={sfxRef} src="/join.mp3" /></>}
-      {/* Background is z-0, content z-10 or higher */}
       {view !== 'player' && <SpookyBackground />}
       
       {view === 'home' && <HomeScreen onCreate={createGame} onJoin={joinGame} error={error} />}
@@ -421,6 +450,7 @@ const HomeScreen = ({ onCreate, onJoin, error }) => {
 const HostView = ({ gameId, gameState }) => {
   const [mugshots, setMugshots] = useState({});
   const advance = (s, d={}) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { status: s, roundStartedAt: Date.now(), ...d });
+  const setStatus = (s) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { status: s });
 
   useEffect(() => {
     const fetchMugshots = async () => {
@@ -529,13 +559,6 @@ const HostView = ({ gameId, gameState }) => {
     advance('debrief2', { round2WinnerName: winner?.name || "No One" });
   };
 
-  const setupTranscript = async () => {
-    const kDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${gameState.murdererId}`));
-    const text = (kDoc.data().dossier?.neighbor || "THE LAKE HOUSE").toUpperCase();
-    const phrase = text.split('').map(c => ({ char: c, revealed: c===' ' || Math.random() < 0.3 })); 
-    advance('role_reveal'); 
-  };
-
   const setupRumors = async () => {
     let rumors = [];
     for(const p of gameState.players) {
@@ -543,7 +566,6 @@ const HostView = ({ gameId, gameState }) => {
       if(d.data().dossier?.rumor) rumors.push({ text: d.data().dossier.rumor, author: p.name });
     }
     if(rumors.length<2) { rumors.push({text:"I saw blood.", author:"Anon"}); rumors.push({text:"He is lying.", author:"Anon"}); }
-    
     await Promise.all(gameState.players.map(async p => {
       const r1 = rumors[Math.floor(Math.random()*rumors.length)];
       const r2 = rumors[Math.floor(Math.random()*rumors.length)];
@@ -561,11 +583,14 @@ const HostView = ({ gameId, gameState }) => {
     }
     const topSuspect = Object.keys(votes).reduce((a, b) => votes[a] > votes[b] ? a : b, null);
     const topWeapon = Object.keys(wVotes).reduce((a, b) => wVotes[a] > wVotes[b] ? a : b, null);
+    
+    // Logic: Majority MUST match exactly.
     const caught = topSuspect === gameState.murdererId && topWeapon === gameState.murderWeapon;
     advance('reveal', { caught });
   };
 
   const restart = async () => {
+    // RESET ALL FIELDS
     await Promise.all(gameState.players.map(p => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`), {
       uid: p.uid, name: p.name, dossier: {}, score: 0, hand: [], inbox: [],
       hasSubmittedDossier: false, submittedWeapons: [], r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null
@@ -576,7 +601,16 @@ const HostView = ({ gameId, gameState }) => {
   };
 
   // --- RENDER HOST VIEWS ---
-  if(gameState.status === 'lobby') return <div className="h-full flex flex-col items-center justify-center relative z-20 text-center"><h1 className="text-8xl font-black text-red-600 mb-4 drop-shadow-lg">LOBBY</h1><div className="text-4xl text-white mb-8 font-mono">{gameId}</div><div className="grid grid-cols-4 gap-6 w-full max-w-6xl">{gameState.players.map(p => <div key={p.uid} className="bg-slate-800 p-6 rounded-xl text-3xl font-bold border-2 border-slate-600 text-center">{p.name}</div>)}</div>{gameState.players.length > 0 && <button onClick={startGame} className="mt-12 bg-red-600 px-16 py-6 text-4xl font-black rounded-full shadow-lg">START NIGHT</button>}</div>;
+  if(gameState.status === 'lobby') return (
+    <div className="h-full flex flex-col items-center justify-center relative z-20 text-center">
+      <h1 className="text-8xl font-black text-red-600 mb-4 drop-shadow-lg">LOBBY</h1>
+      <div className="text-4xl text-white mb-8 font-mono">{gameId}</div>
+      <div className="grid grid-cols-4 gap-6 w-full max-w-6xl">{gameState.players.map(p => <div key={p.uid} className="bg-slate-800 p-6 rounded-xl text-3xl font-bold border-2 border-slate-600 text-center">{p.name}</div>)}</div>
+      {gameState.players.length > 0 && <button onClick={startGame} className="mt-12 bg-red-600 px-16 py-6 text-4xl font-black rounded-full shadow-lg">START NIGHT</button>}
+      {/* PERSISTENT ROOM CODE */}
+      <div className="fixed bottom-4 right-4 bg-slate-900/80 px-4 py-2 rounded text-slate-500 font-mono border border-slate-700">Code: {gameId}</div>
+    </div>
+  );
 
   if(gameState.status === 'intro') return <div className="h-full w-full bg-black relative z-50"><video src="/intro.mp4" autoPlay className="w-full h-full object-contain" onEnded={()=>advance('brainstorm')} /><button onClick={()=>advance('brainstorm')} className="absolute top-4 right-4 bg-slate-800 text-white px-6 py-2 rounded-full font-bold border border-slate-600 z-50">SKIP VIDEO</button></div>;
 
@@ -599,17 +633,15 @@ const HostView = ({ gameId, gameState }) => {
             ))}
         </div>
         <p className="text-xl text-slate-400 mb-8">Combine these descriptions into one suspect.</p>
-        <Timer duration={90} onComplete={setupLineup}/>
+        <Timer duration={45} onComplete={setupLineup}/>
     </div>
   );
 
   if(gameState.status === 'lineup') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-12">SKETCH VOTING</h2><div className="text-3xl text-slate-400 animate-pulse">Vote on your devices...</div><div className="mt-8"><Timer duration={45} onComplete={handleRound2Winner}/></div><button onClick={handleRound2Winner} className="mt-8 bg-slate-800 px-6 py-2 rounded text-slate-400 hover:text-white hover:bg-slate-700">Force End Voting</button></div>;
 
-  if(gameState.status === 'debrief2') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-4">DEBRIEF</h2>{gameState.round2WinnerName && <div className="text-3xl text-green-400 mb-8 font-bold">WINNER: {gameState.round2WinnerName} (Advantage Sent)</div>}<Timer duration={240} onComplete={setupTranscript}/><button onClick={setupTranscript} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip</button></div>;
+  if(gameState.status === 'debrief2') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-4">DEBRIEF</h2>{gameState.round2WinnerName && <div className="text-3xl text-green-400 mb-8 font-bold">WINNER: {gameState.round2WinnerName} (Advantage Sent)</div>}<Timer duration={240} onComplete={()=>advance('role_reveal')}/><button onClick={()=>advance('role_reveal')} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip</button></div>;
 
-  if(gameState.status === 'role_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-20 bg-black"><h1 className="text-8xl font-black text-white mb-8 animate-pulse">CHECK YOUR PHONE</h1><Timer duration={15} onComplete={()=>advance('round3')}/></div>;
-
-  if(gameState.status === 'round3') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-5xl font-bold mb-12 text-red-500 tracking-widest">DECODE THE TRANSCRIPT</h2><div className="flex flex-wrap gap-2 justify-center max-w-6xl">{gameState.puzzle?.map((l,i)=><div key={i} className={`w-12 h-16 flex items-center justify-center text-4xl border-b-4 ${l.revealed?'text-green-500 border-green-500':'text-transparent border-slate-700'}`}>{l.revealed?l.char:''}</div>)}</div><div className="mt-12"><Timer duration={90} onComplete={setupRumors}/></div><button onClick={setupRumors} className="mt-6 bg-red-600 px-8 py-3 rounded font-bold">Start Rumors</button></div>;
+  if(gameState.status === 'role_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-20 bg-black"><h1 className="text-8xl font-black text-white mb-8 animate-pulse">CHECK YOUR PHONE</h1><Timer duration={15} onComplete={setupRumors}/></div>;
 
   if(gameState.status === 'round4_exchange') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-4">RUMOR MILL</h2><p className="text-3xl text-slate-400">Tampering in progress...</p><button onClick={()=>advance('round4_debate')} className="mt-8 bg-slate-700 px-6 py-2 rounded">Force Debate</button></div>;
   if(gameState.status === 'round4_debate') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">FINAL ARGUMENTS</h2><div className="text-3xl text-slate-400 mb-8">Check your Inbox</div><Timer duration={60} onComplete={()=>advance('voting')}/><button onClick={()=>advance('voting')} className="mt-12 bg-red-600 px-12 py-4 text-2xl rounded-full font-bold shadow-lg">VOTE NOW</button></div>;
@@ -649,15 +681,17 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
 
   useEffect(() => { setWaiting(false); }, [gameState.status]);
   
-  // FETCH MUGSHOTS/SKETCHES WHEN NEEDED
+  // FETCH DATA
   useEffect(() => {
     const fetchData = async () => {
+        // Fetch Mugshots
         if(gameState.status === 'round1_suspect' || gameState.status === 'voting') {
             gameState.players.forEach(async p => {
                 const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
                 if(d.exists() && d.data().dossier?.mugshot) setMugshots(prev => ({...prev, [p.uid]: d.data().dossier.mugshot}));
             });
         }
+        // Fetch Sketches - Robust check
         if(gameState.status === 'lineup') {
              const s = [];
              for(const p of gameState.players) {
@@ -671,17 +705,6 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   }, [gameState.status]);
 
   const send = async (d) => { setWaiting(true); await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), d); };
-  const submitGuess = async (idx, char) => {
-    if(!gameState.round3Data) return;
-    const target = gameState.round3Data.phrase[idx];
-    if(char.toUpperCase() === target) {
-        const newRevealed = [...gameState.round3Data.revealed];
-        newRevealed[idx] = true;
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
-            "round3Data.revealed": newRevealed
-        });
-    }
-  };
 
   const submitVote = async (sketchId) => {
       setWaiting(true);
@@ -803,27 +826,11 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   }
 
   // ROLE REVEAL
-  if(gameState.status === 'role_reveal_sync' || gameState.status === 'round3') {
+  if(gameState.status === 'role_reveal') {
       return (
         <div className="h-full flex flex-col items-center justify-center p-6 bg-slate-900 relative z-30">
            {!showRole ? <button onClick={()=>setShowRole(true)} className="w-64 h-64 rounded-full bg-slate-800 flex items-center justify-center text-xl font-bold shadow-2xl border-4 border-slate-700">TAP TO REVEAL</button>
            : <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center p-8"><h1 className={`text-5xl font-black mb-4 ${playerState.isMurderer?'text-red-600':'text-blue-500'}`}>{playerState.isMurderer?"MURDERER":"INNOCENT"}</h1><button onClick={()=>setShowRole(false)} className="mt-12 text-slate-500">Hide</button></div>}
-           
-           {gameState.status === 'round3' && gameState.round3Data && (
-             <div className="mt-8 w-full max-w-sm">
-                 <p className="text-center text-slate-500 mb-4">Tap letters to guess (5 guesses left)</p>
-                 <div className="flex flex-wrap gap-1 justify-center">
-                    {gameState.round3Data.phrase.map((l, i) => (
-                        <button key={i} onClick={()=>{
-                            const g = prompt("Guess letter:");
-                            if(g) submitGuess(i, g);
-                        }} disabled={gameState.round3Data.revealed[i]} className={`w-8 h-10 border text-center flex items-center justify-center font-bold ${gameState.round3Data.revealed[i] ? 'border-green-500 text-green-400' : 'border-slate-700 text-transparent'}`}>
-                            {gameState.round3Data.revealed[i] ? l : '?'}
-                        </button>
-                    ))}
-                 </div>
-             </div>
-           )}
         </div>
       );
   }
