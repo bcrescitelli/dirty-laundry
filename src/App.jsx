@@ -129,6 +129,49 @@ const Timer = ({ duration, onComplete, label = "TIME REMAINING" }) => {
   );
 };
 
+const AudioRecorder = ({ onSave, label }) => {
+  const [recording, setRecording] = useState(false);
+  const [audioData, setAudioData] = useState(null);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+
+  const startRecording = async (e) => {
+    if (e) e.preventDefault();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      chunksRef.current = [];
+      
+      mediaRecorderRef.current.ondataavailable = (e) => chunksRef.current.push(e.data);
+      mediaRecorderRef.current.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = () => { setAudioData(reader.result); onSave(reader.result); };
+      };
+      mediaRecorderRef.current.start();
+      setRecording(true);
+      setTimeout(() => { if (mediaRecorderRef.current?.state === 'recording') stopRecording(); }, 10000);
+    } catch (err) { console.error("Mic Error:", err); }
+  };
+  const stopRecording = (e) => { if (e) e.preventDefault(); if (mediaRecorderRef.current?.state === 'recording') { mediaRecorderRef.current.stop(); setRecording(false); } };
+
+  return (
+    <div className="flex flex-col items-center gap-2 p-4 bg-slate-800 rounded-lg border border-slate-700 w-full shadow-lg">
+      <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">{label}</div>
+      {!audioData ? (
+        <button onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110 shadow-[0_0_25px_rgba(220,38,38,0.8)]' : 'bg-slate-600 hover:bg-slate-500'}`}><Mic className="w-8 h-8 text-white" /></button>
+      ) : (
+        <div className="flex flex-col items-center animate-in">
+          <div className="w-20 h-20 rounded-full bg-green-900 border-2 border-green-500 flex items-center justify-center mb-2"><CheckCircle className="w-8 h-8 text-green-400" /></div>
+          <button onClick={() => setAudioData(null)} className="text-xs text-slate-400 underline hover:text-white">Record Again</button>
+        </div>
+      )}
+      <div className="text-xs text-slate-500 mt-1 font-mono">{recording ? <span className="text-red-400 animate-pulse">RECORDING... (10s MAX)</span> : "HOLD TO RECORD"}</div>
+    </div>
+  );
+};
+
 const CameraCapture = ({ onSave }) => {
   const fileInputRef = useRef(null);
   const [preview, setPreview] = useState(null);
@@ -228,7 +271,7 @@ export default function App() {
     });
   }, [user, gameId, view]);
 
-  // Music & SFX
+  // Music & SFX Logic
   useEffect(() => {
     if (!audioRef.current || view !== 'host') return;
     const isPlayingMedia = gameState?.status === 'intro';
@@ -308,6 +351,7 @@ export default function App() {
     <div className="h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden relative selection:bg-red-900 selection:text-white">
       <GameStyles />
       {view === 'host' && <><audio ref={audioRef} src="/music.mp3" loop /><audio ref={sfxRef} src="/join.mp3" /></>}
+      {/* Background is z-0, content z-10 or higher */}
       {view !== 'player' && <SpookyBackground />}
       
       {view === 'home' && <HomeScreen onCreate={createGame} onJoin={joinGame} error={error} />}
@@ -323,7 +367,14 @@ const HomeScreen = ({ onCreate, onJoin, error }) => {
   return (
     <div className="flex flex-col items-center justify-center h-full p-4 relative z-10 text-center">
       <ShieldAlert className="w-24 h-24 text-red-600 mb-6 drop-shadow-[0_0_25px_rgba(220,38,38,0.8)] animate-pulse" />
-      <h1 className="text-7xl font-black text-white mb-2 drop-shadow-lg tracking-tighter">MURDER<br/><span className="text-red-600">AT THE CABIN</span></h1>
+      <h1 className="text-7xl font-black text-white mb-2 drop-shadow-lg tracking-tighter">
+        MURDER<br/>
+        <span className="text-red-600">AT THE CABIN</span>
+      </h1>
+      <p className="text-slate-400 mb-12 max-w-md mx-auto text-lg font-mono">
+        One Killer. Seven Suspects. Infinite Permutations.
+      </p>
+      
       <div className="bg-slate-900/80 p-8 rounded-2xl border border-slate-700 w-full max-w-sm backdrop-blur-md shadow-2xl mt-8">
         <input 
           className="w-full bg-black/50 p-4 rounded-lg mb-3 text-center border border-slate-600 font-mono text-2xl uppercase" 
@@ -350,7 +401,7 @@ const HostView = ({ gameId, gameState }) => {
   const [mugshots, setMugshots] = useState({});
   const advance = (s, d={}) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { status: s, roundStartedAt: Date.now(), ...d });
 
-  // Fetch Mugshots including in Lobby for immediate update
+  // 1. POLLING FOR MUGSHOTS (LOBBY + GAME)
   useEffect(() => {
     const fetchMugshots = async () => {
         const ms = {};
@@ -360,8 +411,26 @@ const HostView = ({ gameId, gameState }) => {
         }
         setMugshots(ms);
     };
-    if (['lobby', 'round1_suspect', 'reveal', 'voting'].includes(gameState.status)) fetchMugshots();
+    // Fetch in Lobby OR game states
+    if (gameState.status === 'lobby' || ['round1_suspect', 'reveal', 'voting'].includes(gameState.status)) {
+        fetchMugshots();
+    }
+  }, [gameState.status, gameState.players]); // Removed interval, rely on player join for lobby update, or manual refresh. 
+  // Better: Add an interval to check for new uploads in Lobby?
+  useEffect(() => {
+      if(gameState.status === 'lobby') {
+          const i = setInterval(async () => {
+              const ms = {};
+              for(const p of gameState.players) {
+                  const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
+                  if(d.exists() && d.data().dossier?.mugshot) ms[p.uid] = d.data().dossier.mugshot;
+              }
+              setMugshots(prev => ({...prev, ...ms}));
+          }, 2000);
+          return () => clearInterval(i);
+      }
   }, [gameState.status, gameState.players]);
+
 
   // AUTO ADVANCE
   useEffect(() => {
@@ -370,7 +439,7 @@ const HostView = ({ gameId, gameState }) => {
       const snaps = await Promise.all(gameState.players.map(p => getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`))));
       const data = snaps.map(s => s.data());
 
-      // Brainstorm just follows timer now, no auto-advance
+      if (gameState.status === 'brainstorm' && data.every(p => p?.hasSubmittedWeapons)) finishBrainstorm();
       if (gameState.status === 'round1_suspect' && data.every(p => p?.r1Suspect)) advance('round1_weapon');
       if (gameState.status === 'round1_weapon' && data.every(p => p?.r1Weapon)) calculateR1Stats();
       if (gameState.status === 'round2' && data.every(p => p?.sketch)) setupLineup();
@@ -717,7 +786,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
     return (
       <div className="p-4 grid grid-cols-2 gap-4 h-full overflow-y-auto pb-20 relative z-30">
         <div className="col-span-2 text-center text-slate-400 uppercase text-xs font-bold mb-2">Vote for the Killer</div>
-        {gameState.players.map(p => <button key={p.uid} onClick={()=>send({ r1Suspect: p.uid })} className="bg-slate-800 p-4 rounded-xl font-bold border-2 border-slate-700 hover:bg-slate-700 flex flex-col items-center aspect-square justify-center">{mugshots[p.uid] && <img src={mugshots[p.uid]} className="w-16 h-16 rounded-full mb-1 object-cover"/>}{p.name}</button>)}
+        {gameState.players.map(p => <button key={p.uid} onClick={()=>send({ r1Suspect: p.uid })} className="bg-slate-800 p-4 rounded-xl font-bold border-2 border-slate-700 hover:bg-slate-700 flex flex-col items-center aspect-square justify-center">{mugshots[p.uid] && <img src={mugshots[p.uid]} className="w-16 h-16 rounded-full mb-2 object-cover"/>}{p.name}</button>)}
       </div>
     );
   }
@@ -805,6 +874,9 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   if(gameState.status === 'round4_exchange') {
       const currentCard = playerState.hand && playerState.hand[cardIdx];
       if(!currentCard) return <div className="h-full flex items-center justify-center text-slate-500">Waiting for cards...</div>;
+      
+      const isVerified = !playerState.isMurderer && (rumorNote.replace(/\s+/g, ' ').trim().toLowerCase() === currentCard.text.replace(/\s+/g, ' ').trim().toLowerCase());
+
       return (
         <div className="p-6 h-full flex flex-col relative z-30 overflow-y-auto">
             <h2 className="text-center font-bold text-white mb-4">RUMOR MILL</h2>
@@ -819,9 +891,9 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
                     <textarea className="w-full h-24 bg-slate-800 text-white p-3 rounded border border-red-500/50 focus:border-red-500 outline-none" value={rumorEdit} onChange={e=>setRumorEdit(e.target.value)} placeholder="Rewrite this rumor..." />
                 </div>
             ) : (
-                <div className="mb-4">
-                     <p className="text-blue-400 font-bold text-xs uppercase mb-2">VERIFY (RETYPE EXACTLY):</p>
-                     <textarea className="w-full h-24 bg-slate-800 text-white p-3 rounded border border-blue-500/50 focus:border-blue-500 outline-none" value={rumorNote} onChange={e=>setRumorNote(e.target.value)} placeholder="Type original rumor here..." />
+                <div className={`mb-4 p-4 border rounded ${isVerified ? 'border-green-500 bg-green-900/20' : 'border-blue-500 bg-slate-800'}`}>
+                     <p className={`${isVerified ? 'text-green-400' : 'text-blue-400'} font-bold text-xs uppercase mb-2`}>{isVerified ? "VERIFIED!" : "VERIFY (RETYPE EXACTLY):"}</p>
+                     <textarea className="w-full h-24 bg-transparent text-white p-2 outline-none" value={rumorNote} onChange={e=>setRumorNote(e.target.value)} placeholder="Type original rumor here..." />
                 </div>
             )}
 
@@ -830,8 +902,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
                {gameState.players.filter(p=>p.uid!==user.uid).map(p=><option key={p.uid} value={p.uid}>{p.name}</option>)}
             </select>
 
-            <button disabled={!targetId || (playerState.isMurderer ? !rumorEdit : rumorNote.trim().toLowerCase() !== currentCard.text.trim().toLowerCase())} onClick={async ()=>{
-                // FIX: Send rumorNote for innocent, rumorEdit for killer.
+            <button disabled={!targetId || (playerState.isMurderer ? !rumorEdit : !isVerified)} onClick={async ()=>{
                 const txt = playerState.isMurderer ? rumorEdit : rumorNote;
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${targetId}`), { inbox: arrayUnion({ text: txt, fromName: user.name }) });
                 setRumorEdit(""); setRumorNote(""); setTargetId("");
