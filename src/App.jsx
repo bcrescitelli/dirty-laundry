@@ -17,7 +17,7 @@ import {
 import { 
   Users, Clock, ShieldAlert, FileText, Send, Lock, Zap, ArrowRight, 
   Eye, Volume2, VolumeX, Mic, Play, Pause, Gavel, ThumbsUp, Mail, 
-  CheckCircle, XCircle, Camera, Skull, Ghost, AlertTriangle, RefreshCw, Edit3
+  CheckCircle, XCircle, Camera, Skull, Ghost, AlertTriangle, RefreshCw, Edit3, Sword
 } from 'lucide-react';
 
 /* -----------------------------------------------------------------------
@@ -45,63 +45,9 @@ const db = getFirestore(app);
 const appId = "murder-at-the-cabin";
 
 /* -----------------------------------------------------------------------
-  AUDIO & VISUAL UTILITIES
+  UTILITIES
   -----------------------------------------------------------------------
 */
-
-const playDistortedAudio = async (url) => {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioContext();
-    
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
-    
-    const response = await fetch(url);
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-
-    // Pitch shift (0.8 = deeper voice)
-    source.playbackRate.value = 0.8; 
-
-    // Ring Modulator (Robotic/Metallic Effect)
-    const oscillator = audioCtx.createOscillator();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 30; 
-    
-    const dryGain = audioCtx.createGain();
-    const wetGain = audioCtx.createGain();
-    const effectGain = audioCtx.createGain();
-
-    dryGain.gain.value = 0.3; 
-    wetGain.gain.value = 0.7; 
-
-    source.connect(dryGain);
-    dryGain.connect(audioCtx.destination);
-
-    source.connect(effectGain);
-    oscillator.connect(effectGain.gain);
-    effectGain.connect(wetGain);
-    wetGain.connect(audioCtx.destination);
-
-    oscillator.start();
-    source.start();
-    
-    return new Promise((resolve) => {
-      source.onended = () => {
-        oscillator.stop();
-        audioCtx.close();
-        resolve();
-      };
-    });
-  } catch (e) {
-    console.error("Audio distortion failed", e);
-  }
-};
 
 const resizeImage = (file, maxWidth = 300) => {
     return new Promise((resolve) => {
@@ -180,49 +126,6 @@ const Timer = ({ duration, onComplete, label = "TIME REMAINING" }) => {
       <div className={`text-4xl font-mono font-bold px-6 py-2 rounded-lg border-2 bg-black/80 backdrop-blur-md ${timeLeft < 10 ? 'text-red-500 border-red-500 animate-pulse' : 'text-slate-200 border-slate-700'}`}>
         {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
       </div>
-    </div>
-  );
-};
-
-const AudioRecorder = ({ onSave, label }) => {
-  const [recording, setRecording] = useState(false);
-  const [audioData, setAudioData] = useState(null);
-  const mediaRecorderRef = useRef(null);
-  const chunksRef = useRef([]);
-
-  const startRecording = async (e) => {
-    if (e) e.preventDefault();
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      mediaRecorderRef.current = new MediaRecorder(stream);
-      chunksRef.current = [];
-      
-      mediaRecorderRef.current.ondataavailable = (e) => chunksRef.current.push(e.data);
-      mediaRecorderRef.current.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onloadend = () => { setAudioData(reader.result); onSave(reader.result); };
-      };
-      mediaRecorderRef.current.start();
-      setRecording(true);
-      setTimeout(() => { if (mediaRecorderRef.current?.state === 'recording') stopRecording(); }, 10000);
-    } catch (err) { console.error("Mic Error:", err); }
-  };
-  const stopRecording = (e) => { if (e) e.preventDefault(); if (mediaRecorderRef.current?.state === 'recording') { mediaRecorderRef.current.stop(); setRecording(false); } };
-
-  return (
-    <div className="flex flex-col items-center gap-2 p-4 bg-slate-800 rounded-lg border border-slate-700 w-full shadow-lg">
-      <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">{label}</div>
-      {!audioData ? (
-        <button onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110 shadow-[0_0_25px_rgba(220,38,38,0.8)]' : 'bg-slate-600 hover:bg-slate-500'}`}><Mic className="w-8 h-8 text-white" /></button>
-      ) : (
-        <div className="flex flex-col items-center animate-in">
-          <div className="w-20 h-20 rounded-full bg-green-900 border-2 border-green-500 flex items-center justify-center mb-2"><CheckCircle className="w-8 h-8 text-green-400" /></div>
-          <button onClick={() => setAudioData(null)} className="text-xs text-slate-400 underline hover:text-white">Record Again</button>
-        </div>
-      )}
-      <div className="text-xs text-slate-500 mt-1 font-mono">{recording ? <span className="text-red-400 animate-pulse">RECORDING... (10s MAX)</span> : "HOLD TO RECORD"}</div>
     </div>
   );
 };
@@ -326,17 +229,17 @@ export default function App() {
     });
   }, [user, gameId, view]);
 
-  // Music & SFX
+  // Music & SFX Logic
   useEffect(() => {
     if (!audioRef.current || view !== 'host') return;
-    const isPlayingMedia = gameState?.status === 'intro' || gameState?.status === 'audio_playback_active';
-    const isQuietRound = ['brainstorm', 'round1_suspect', 'round1_weapon', 'round2', 'round4_exchange'].includes(gameState?.status);
+    const isPlayingMedia = gameState?.status === 'intro';
     
     if (isPlayingMedia) {
         audioRef.current.pause(); 
     } else {
         if (audioRef.current.paused) audioRef.current.play().catch(()=>{});
-        audioRef.current.volume = isMuted ? 0 : (isQuietRound ? 0.1 : 0.3);
+        const isQuiet = !['lobby', 'debrief1', 'debrief2', 'reveal'].includes(gameState?.status);
+        audioRef.current.volume = isMuted ? 0 : (isQuiet ? 0.1 : 0.3);
     }
   }, [gameState?.status, isMuted, view]);
 
@@ -369,6 +272,9 @@ export default function App() {
       possibleWeapons: [],
       murderWeapon: '',
       sketchPrompts: [],
+      weaponClues: [], // For Round 6
+      displayedWeapons: [], // Subset for Round 6
+      ghostId: null,
       createdAt: new Date().toISOString()
     };
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', code), initialGameState);
@@ -384,8 +290,9 @@ export default function App() {
     
     await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${cleanCode}_${user.uid}`), {
       uid: user.uid, name, dossier: {}, roleName: 'TBD', isMurderer: false, hasSubmittedDossier: false,
-      score: 0, hand: [], inbox: [], advantageClue: null, submittedWeapons: [], 
-      r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null
+      score: 0, hand: [], inbox: [], advantageClue: null, guessesLeft: 5, submittedWeapons: [], 
+      r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null,
+      weaponClue: null, isGhost: false
     });
 
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', cleanCode), {
@@ -402,6 +309,7 @@ export default function App() {
     <div className="h-screen bg-slate-950 text-slate-100 font-sans overflow-hidden relative selection:bg-red-900 selection:text-white">
       <GameStyles />
       {view === 'host' && <><audio ref={audioRef} src="/music.mp3" loop /><audio ref={sfxRef} src="/join.mp3" /></>}
+      {/* Background is z-0, content z-10 or higher */}
       {view !== 'player' && <SpookyBackground />}
       
       {view === 'home' && <HomeScreen onCreate={createGame} onJoin={joinGame} error={error} />}
@@ -417,14 +325,7 @@ const HomeScreen = ({ onCreate, onJoin, error }) => {
   return (
     <div className="flex flex-col items-center justify-center h-full p-4 relative z-10 text-center">
       <ShieldAlert className="w-24 h-24 text-red-600 mb-6 drop-shadow-[0_0_25px_rgba(220,38,38,0.8)] animate-pulse" />
-      <h1 className="text-7xl font-black text-white mb-2 drop-shadow-lg tracking-tighter">
-        MURDER<br/>
-        <span className="text-red-600">AT THE CABIN</span>
-      </h1>
-      <p className="text-slate-400 mb-12 max-w-md mx-auto text-lg font-mono">
-        One Killer. Seven Suspects. Infinite Permutations.
-      </p>
-      
+      <h1 className="text-7xl font-black text-white mb-2 drop-shadow-lg tracking-tighter">MURDER<br/><span className="text-red-600">AT THE CABIN</span></h1>
       <div className="bg-slate-900/80 p-8 rounded-2xl border border-slate-700 w-full max-w-sm backdrop-blur-md shadow-2xl mt-8">
         <input 
           className="w-full bg-black/50 p-4 rounded-lg mb-3 text-center border border-slate-600 font-mono text-2xl uppercase" 
@@ -450,7 +351,6 @@ const HomeScreen = ({ onCreate, onJoin, error }) => {
 const HostView = ({ gameId, gameState }) => {
   const [mugshots, setMugshots] = useState({});
   const advance = (s, d={}) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { status: s, roundStartedAt: Date.now(), ...d });
-  const setStatus = (s) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { status: s });
 
   useEffect(() => {
     const fetchMugshots = async () => {
@@ -461,7 +361,7 @@ const HostView = ({ gameId, gameState }) => {
         }
         setMugshots(ms);
     };
-    if (['round1_suspect', 'reveal', 'voting'].includes(gameState.status)) fetchMugshots();
+    if (['lobby', 'round1_suspect', 'reveal', 'voting'].includes(gameState.status)) fetchMugshots();
   }, [gameState.status, gameState.players]);
 
   // AUTO ADVANCE
@@ -475,13 +375,15 @@ const HostView = ({ gameId, gameState }) => {
       if (gameState.status === 'round1_suspect' && data.every(p => p?.r1Suspect)) advance('round1_weapon');
       if (gameState.status === 'round1_weapon' && data.every(p => p?.r1Weapon)) calculateR1Stats();
       if (gameState.status === 'round2' && data.every(p => p?.sketch)) setupLineup();
-      // Lineup and Debate intentionally manual or timer-based to allow discussion
+      // Round 2 Winner calc manual/timer
       if (gameState.status === 'round4_exchange' && data.every(p => p?.finishedExchange)) advance('round4_debate');
+      if (gameState.status === 'killing_round' && data.some(p => p?.victimChoice)) handleMurder(); // Wait for killer choice
+      if (gameState.status === 'weapon_clues' && (gameState.weaponClues?.length === 2 || (gameState.weaponClues?.length === 1 && !gameState.ghostId))) revealClues();
       if (gameState.status === 'voting' && data.every(p => p?.finalVote)) checkWinner();
     };
     const i = setInterval(check, 2000);
     return () => clearInterval(i);
-  }, [gameState.status, gameState.players]);
+  }, [gameState.status, gameState.players, gameState.weaponClues, gameState.ghostId]);
 
   const startGame = () => advance('intro');
 
@@ -492,14 +394,15 @@ const HostView = ({ gameId, gameState }) => {
       if(d.data().submittedWeapons) weapons.push(...d.data().submittedWeapons);
     }
     if(weapons.length < 5) weapons = [...weapons, ...DEFAULT_WEAPONS];
-    weapons = [...new Set(weapons)].sort(()=>0.5-Math.random()).slice(0, 15);
+    // Pool all, pick 15
+    const pool = [...new Set(weapons)].sort(()=>0.5-Math.random()).slice(0, 15);
     
     const kIndex = Math.floor(Math.random() * gameState.players.length);
     const kUid = gameState.players[kIndex].uid;
-    const weapon = weapons[Math.floor(Math.random() * weapons.length)];
+    const weapon = pool[Math.floor(Math.random() * pool.length)];
     
     await Promise.all(gameState.players.map(p => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`), { isMurderer: p.uid === kUid })));
-    advance('round1_suspect', { possibleWeapons: weapons, murderWeapon: weapon, murdererId: kUid });
+    advance('round1_suspect', { possibleWeapons: pool, murderWeapon: weapon, murdererId: kUid });
   };
 
   const calculateR1Stats = async () => {
@@ -547,10 +450,12 @@ const HostView = ({ gameId, gameState }) => {
     
     const winner = gameState.players.find(p => p.uid === winnerId);
     
+    // Advantage Logic
     const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId && p.uid !== winnerId);
     const revealedInnocent = innocents.length > 0 ? innocents[Math.floor(Math.random() * innocents.length)] : null;
     let clueText = "Trust your instincts.";
     if(revealedInnocent) clueText = `${revealedInnocent.name} is INNOCENT.`;
+    else if(winnerId !== gameState.murdererId) clueText = "You are Innocent. Trust yourself.";
 
     if (winnerId) {
        const winRef = doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${winnerId}`);
@@ -566,6 +471,7 @@ const HostView = ({ gameId, gameState }) => {
       if(d.data().dossier?.rumor) rumors.push({ text: d.data().dossier.rumor, author: p.name });
     }
     if(rumors.length<2) { rumors.push({text:"I saw blood.", author:"Anon"}); rumors.push({text:"He is lying.", author:"Anon"}); }
+    
     await Promise.all(gameState.players.map(async p => {
       const r1 = rumors[Math.floor(Math.random()*rumors.length)];
       const r2 = rumors[Math.floor(Math.random()*rumors.length)];
@@ -574,43 +480,69 @@ const HostView = ({ gameId, gameState }) => {
     advance('round4_exchange');
   };
 
+  // KILLING ROUND LOGIC
+  const startKillingRound = async () => {
+      advance('killing_round');
+  };
+
+  const handleMurder = async () => {
+      // Find who the killer selected
+      const kDoc = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${gameState.murdererId}`));
+      const victimId = kDoc.data().victimChoice;
+      
+      // Update Victim to Ghost
+      if(victimId) {
+          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${victimId}`), { isGhost: true });
+          await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { ghostId: victimId });
+          advance('killing_reveal', { victimId });
+      }
+  };
+
+  // WEAPON DEDUCTION
+  const startWeaponRound = async () => {
+      // Pick 7 weapons including real one
+      const others = gameState.possibleWeapons.filter(w => w !== gameState.murderWeapon).sort(()=>0.5-Math.random()).slice(0,6);
+      const display = [...others, gameState.murderWeapon].sort(()=>0.5-Math.random());
+      
+      advance('weapon_clues', { displayedWeapons: display, weaponClues: [] });
+  };
+  
+  const revealClues = async () => {
+      // Fetch clues from Game State (pushed by players)
+      // Actually players push to game state array directly? Or we fetch from players?
+      // Let's have players push to a 'weaponClue' field and we fetch.
+      // But for sequential (Killer -> Ghost), we need state.
+      // Implemented: Players update Game Doc 'weaponClues' array directly.
+      advance('weapon_reveal');
+  };
+
   const checkWinner = async () => {
     const votes = {}; const wVotes = {};
     for(const p of gameState.players) {
       const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
       const v = d.data().finalVote; 
-      if(v) { votes[v.suspect] = (votes[v.suspect] || 0) + 1; wVotes[v.weapon] = (wVotes[v.weapon] || 0) + 1; }
+      if(v) { votes[v.suspect] = (votes[v.suspect] || 0) + 1; if(v.weapon) wVotes[v.weapon] = (wVotes[v.weapon] || 0) + 1; }
     }
     const topSuspect = Object.keys(votes).reduce((a, b) => votes[a] > votes[b] ? a : b, null);
     const topWeapon = Object.keys(wVotes).reduce((a, b) => wVotes[a] > wVotes[b] ? a : b, null);
     
-    // Logic: Majority MUST match exactly.
     const caught = topSuspect === gameState.murdererId && topWeapon === gameState.murderWeapon;
     advance('reveal', { caught });
   };
 
   const restart = async () => {
-    // RESET ALL FIELDS
     await Promise.all(gameState.players.map(p => setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`), {
       uid: p.uid, name: p.name, dossier: {}, score: 0, hand: [], inbox: [],
-      hasSubmittedDossier: false, submittedWeapons: [], r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null
+      hasSubmittedDossier: false, submittedWeapons: [], r1Suspect: null, r1Weapon: null, sketch: null, finalVote: null, sketchVote: null,
+      victimChoice: null, weaponClue: null, isGhost: false
     })));
     await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), {
-      status: 'lobby', possibleWeapons: [], murderWeapon: '', roundStats: {}, sketches: [], puzzle: null
+      status: 'lobby', possibleWeapons: [], murderWeapon: '', roundStats: {}, sketches: [], puzzle: null, weaponClues: [], ghostId: null
     });
   };
 
   // --- RENDER HOST VIEWS ---
-  if(gameState.status === 'lobby') return (
-    <div className="h-full flex flex-col items-center justify-center relative z-20 text-center">
-      <h1 className="text-8xl font-black text-red-600 mb-4 drop-shadow-lg">LOBBY</h1>
-      <div className="text-4xl text-white mb-8 font-mono">{gameId}</div>
-      <div className="grid grid-cols-4 gap-6 w-full max-w-6xl">{gameState.players.map(p => <div key={p.uid} className="bg-slate-800 p-6 rounded-xl text-3xl font-bold border-2 border-slate-600 text-center">{p.name}</div>)}</div>
-      {gameState.players.length > 0 && <button onClick={startGame} className="mt-12 bg-red-600 px-16 py-6 text-4xl font-black rounded-full shadow-lg">START NIGHT</button>}
-      {/* PERSISTENT ROOM CODE */}
-      <div className="fixed bottom-4 right-4 bg-slate-900/80 px-4 py-2 rounded text-slate-500 font-mono border border-slate-700">Code: {gameId}</div>
-    </div>
-  );
+  if(gameState.status === 'lobby') return <div className="h-full flex flex-col items-center justify-center relative z-20 text-center"><h1 className="text-8xl font-black text-red-600 mb-4 drop-shadow-lg">LOBBY</h1><div className="text-4xl text-white mb-8 font-mono">{gameId}</div><div className="grid grid-cols-4 gap-6 w-full max-w-6xl">{gameState.players.map(p => <div key={p.uid} className="bg-slate-800 p-6 rounded-xl text-3xl font-bold border-2 border-slate-600 text-center flex flex-col items-center gap-2">{mugshots[p.uid] && <img src={mugshots[p.uid]} className="w-24 h-24 rounded-full object-cover border-2 border-slate-500"/>}{p.name}</div>)}</div>{gameState.players.length > 0 && <button onClick={startGame} className="mt-12 bg-red-600 px-16 py-6 text-4xl font-black rounded-full shadow-lg">START NIGHT</button>}</div>;
 
   if(gameState.status === 'intro') return <div className="h-full w-full bg-black relative z-50"><video src="/intro.mp4" autoPlay className="w-full h-full object-contain" onEnded={()=>advance('brainstorm')} /><button onClick={()=>advance('brainstorm')} className="absolute top-4 right-4 bg-slate-800 text-white px-6 py-2 rounded-full font-bold border border-slate-600 z-50">SKIP VIDEO</button></div>;
 
@@ -622,20 +554,7 @@ const HostView = ({ gameId, gameState }) => {
 
   if(gameState.status === 'debrief1') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">RESULTS</h2><div className="flex gap-8 mb-12"><div className="text-center"><div className="text-8xl font-black text-green-500">{gameState.r1Stats.perfect}</div><div>PERFECT</div></div><div className="text-center"><div className="text-8xl font-black text-yellow-500">{gameState.r1Stats.kOnly + gameState.r1Stats.wOnly}</div><div>PARTIAL</div></div><div className="text-center"><div className="text-8xl font-black text-red-500">{gameState.r1Stats.wrong}</div><div>WRONG</div></div></div><Timer duration={240} onComplete={setupSketchRound}/><button onClick={setupSketchRound} className="mt-8 bg-slate-700 px-8 py-3 rounded font-bold">Skip Debrief</button></div>;
 
-  if(gameState.status === 'round2') return (
-    <div className="h-full flex flex-col items-center justify-center relative z-20">
-        <h2 className="text-6xl font-bold mb-8 text-white">WITNESS STATEMENTS</h2>
-        <div className="flex gap-8 mb-8">
-            {gameState.sketchPrompts?.map((txt, i) => (
-                <div key={i} className="bg-black/50 p-6 rounded-xl border-2 border-red-500 max-w-sm text-2xl font-serif text-white">
-                    "{txt}"
-                </div>
-            ))}
-        </div>
-        <p className="text-xl text-slate-400 mb-8">Combine these descriptions into one suspect.</p>
-        <Timer duration={45} onComplete={setupLineup}/>
-    </div>
-  );
+  if(gameState.status === 'round2') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-8 text-white">WITNESS STATEMENTS</h2><div className="flex gap-8 mb-12">{gameState.sketchPrompts?.map((t,i)=><div key={i} className="bg-black/50 p-8 rounded-xl border-2 border-red-500 text-3xl font-serif text-white max-w-md">"{t}"</div>)}</div><p className="text-xl text-slate-400 mb-8">Draw a suspect based on these clues.</p><Timer duration={90} onComplete={setupLineup}/></div>;
 
   if(gameState.status === 'lineup') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-12">SKETCH VOTING</h2><div className="text-3xl text-slate-400 animate-pulse">Vote on your devices...</div><div className="mt-8"><Timer duration={45} onComplete={handleRound2Winner}/></div><button onClick={handleRound2Winner} className="mt-8 bg-slate-800 px-6 py-2 rounded text-slate-400 hover:text-white hover:bg-slate-700">Force End Voting</button></div>;
 
@@ -644,7 +563,15 @@ const HostView = ({ gameId, gameState }) => {
   if(gameState.status === 'role_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-20 bg-black"><h1 className="text-8xl font-black text-white mb-8 animate-pulse">CHECK YOUR PHONE</h1><Timer duration={15} onComplete={setupRumors}/></div>;
 
   if(gameState.status === 'round4_exchange') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-4">RUMOR MILL</h2><p className="text-3xl text-slate-400">Tampering in progress...</p><button onClick={()=>advance('round4_debate')} className="mt-8 bg-slate-700 px-6 py-2 rounded">Force Debate</button></div>;
-  if(gameState.status === 'round4_debate') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">FINAL ARGUMENTS</h2><div className="text-3xl text-slate-400 mb-8">Check your Inbox</div><Timer duration={60} onComplete={()=>advance('voting')}/><button onClick={()=>advance('voting')} className="mt-12 bg-red-600 px-12 py-4 text-2xl rounded-full font-bold shadow-lg">VOTE NOW</button></div>;
+  if(gameState.status === 'round4_debate') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8">FINAL ARGUMENTS</h2><div className="text-3xl text-slate-400 mb-8">Check your Inbox</div><Timer duration={60} onComplete={startKillingRound}/><button onClick={startKillingRound} className="mt-12 bg-red-600 px-12 py-4 text-2xl rounded-full font-bold shadow-lg">NEXT</button></div>;
+
+  // KILLING ROUND
+  if(gameState.status === 'killing_round') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-black mb-8 text-red-600 animate-pulse">SOMEONE IS DYING...</h2><p className="text-2xl text-slate-400">The Murderer is choosing a victim.</p></div>;
+  if(gameState.status === 'killing_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h1 className="text-8xl font-black text-white mb-4">MURDER!</h1><div className="text-5xl text-red-500 font-bold mb-8">VICTIM: {gameState.players.find(p=>p.uid===gameState.ghostId)?.name}</div><p className="text-xl text-slate-400">They are now a Ghost.</p><Timer duration={10} onComplete={startWeaponRound}/></div>;
+
+  // WEAPON DEDUCTION
+  if(gameState.status === 'weapon_clues') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-5xl font-bold mb-8">WEAPON ANALYSIS</h2><div className="flex flex-wrap gap-4 justify-center max-w-6xl mb-8">{gameState.displayedWeapons?.map(w=><div key={w} className="bg-slate-800 px-6 py-3 rounded text-xl border border-slate-600">{w}</div>)}</div><p className="text-2xl text-slate-400 animate-pulse">Waiting for clues...</p></div>;
+  if(gameState.status === 'weapon_reveal') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-5xl font-bold mb-8">CLUES REVEALED</h2><div className="flex gap-12 mb-12">{gameState.weaponClues?.map((c,i)=><div key={i} className="bg-white text-black p-8 rounded-xl text-4xl font-black transform rotate-2">{c}</div>)}</div><p className="text-xl text-slate-400">Discuss: Which of the 7 weapons matches these clues?</p><Timer duration={120} onComplete={()=>advance('voting')}/><button onClick={()=>advance('voting')} className="mt-8 bg-red-600 px-8 py-3 rounded font-bold">Vote</button></div>;
 
   if(gameState.status === 'voting') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-7xl font-black mb-8 text-red-500">FINAL JUDGMENT</h2><div className="grid grid-cols-4 gap-4 w-full max-w-6xl mb-8">{gameState.players.map(p=><div key={p.uid} className="flex flex-col items-center"><img src={mugshots[p.uid]} className="w-24 h-24 rounded-full object-cover border-2 border-slate-600 mb-2"/><div className="font-bold">{p.name}</div></div>)}</div><p className="text-2xl text-slate-400">Cast your votes.</p></div>;
 
@@ -678,10 +605,12 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   const [waiting, setWaiting] = useState(false);
   const [mugshots, setMugshots] = useState({});
   const [sketches, setSketches] = useState([]);
+  const [weaponClue, setWeaponClue] = useState("");
+  const [busyWork, setBusyWork] = useState("");
 
   useEffect(() => { setWaiting(false); }, [gameState.status]);
   
-  // FETCH DATA
+  // FETCH MUGSHOTS/SKETCHES WHEN NEEDED
   useEffect(() => {
     const fetchData = async () => {
         // Fetch Mugshots
@@ -711,6 +640,11 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${user.uid}`), { sketchVote: sketchId });
   };
 
+  const submitWeaponClue = async () => {
+      setWaiting(true);
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { weaponClues: arrayUnion(weaponClue || busyWork) });
+  };
+
   if(!playerState) return <div className="h-full flex items-center justify-center text-slate-500 font-bold text-xl animate-pulse">LOADING PROFILE...</div>;
   if(waiting) return <div className="h-full flex flex-col items-center justify-center text-slate-500 animate-pulse"><CheckCircle className="w-16 h-16 text-green-500 mb-4"/><div>Submitted. Waiting for others...</div></div>;
 
@@ -722,9 +656,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
         <h2 className="text-2xl font-black mb-6 border-b-2 border-slate-800 pb-4 text-white">INTAKE FORM</h2>
         <div className="space-y-8">
           <div className="bg-slate-800/50 p-4 rounded-lg"><label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Start a Rumor</label><textarea className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="I saw someone..." onChange={e=>setForm({...form, rumor: e.target.value})} /></div>
-          <div className="bg-slate-800/50 p-4 rounded-lg"><label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Opinion on neighbor (left)</label><input className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="Be honest..." onChange={e => {const val = e.target.value.replace(/[^a-zA-Z\s]/g, ''); setForm({...form, neighbor: val});}} value={form.neighbor || ''} /></div>
           <div className="bg-slate-800/50 p-4 rounded-lg"><label className="text-xs font-bold text-slate-400 uppercase mb-2 block">Describe the Murderer (Looks)</label><textarea className="w-full bg-slate-900 border border-slate-700 rounded p-4 text-white focus:border-red-500 outline-none" placeholder="They looked like..." onChange={e=>setForm({...form, descriptionText: e.target.value})} /></div>
-          <AudioRecorder label="Say: 'You'll Never Take Me!'" onSave={d=>setForm({...form, impAudio: d})} />
           <CameraCapture onSave={d=>setForm({...form, mugshot: d})} />
           <button disabled={!form.mugshot} onClick={()=>send({ dossier: form, hasSubmittedDossier: true })} className="w-full bg-red-600 py-5 rounded-xl font-black text-lg mt-4 shadow-lg active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100">SUBMIT DOSSIER</button>
         </div>
@@ -866,7 +798,7 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
 
             <button disabled={!targetId || (playerState.isMurderer ? !rumorEdit : rumorNote.trim().toLowerCase() !== currentCard.text.trim().toLowerCase())} onClick={async ()=>{
                 const txt = playerState.isMurderer ? rumorEdit : currentCard.text;
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${targetId}`), { inbox: arrayUnion({ text: txt }) });
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${targetId}`), { inbox: arrayUnion({ text: txt, fromName: user.name }) });
                 setRumorEdit(""); setRumorNote(""); setTargetId("");
                 if(cardIdx===0) setCardIdx(1); else send({finishedExchange:true});
             }} className="w-full bg-blue-600 py-4 rounded-xl font-bold disabled:opacity-50 shadow-lg text-lg">SEND</button>
@@ -881,13 +813,90 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
             <div className="space-y-4">
                 {playerState.inbox && playerState.inbox.length > 0 ? playerState.inbox.map((msg, i) => (
                     <div key={i} className="bg-slate-800 p-4 rounded border-l-4 border-blue-500">
-                        <div className="text-xs text-slate-400 uppercase mb-1">Anonymous Tip</div>
+                        <div className="text-xs text-slate-400 uppercase mb-1">From: {msg.fromName}</div>
                         <p className="text-white font-serif text-lg">"{msg.text}"</p>
                     </div>
                 )) : <div className="text-slate-500 italic">No rumors received.</div>}
             </div>
         </div>
        );
+  }
+
+  // KILLING ROUND
+  if(gameState.status === 'killing_round') {
+      if(!playerState.isMurderer) return <div className="h-full flex items-center justify-center text-slate-500 text-center px-4"><div className="animate-pulse">The Murderer is choosing a victim...<br/>Stay calm.</div></div>;
+      
+      return (
+        <div className="p-6 h-full flex flex-col justify-center">
+            <h2 className="text-3xl font-black text-red-600 mb-6 text-center">KILL A PLAYER</h2>
+            <div className="grid grid-cols-2 gap-4">
+                {gameState.players.filter(p=>p.uid!==user.uid).map(p=>(
+                    <button key={p.uid} onClick={()=>send({ victimChoice: p.uid })} className="bg-red-900/50 border-2 border-red-600 p-6 rounded text-xl font-bold hover:bg-red-800">{p.name}</button>
+                ))}
+            </div>
+        </div>
+      );
+  }
+
+  if(gameState.status === 'killing_reveal') {
+      return (
+          <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+              {playerState.isGhost ? (
+                  <>
+                    <Ghost className="w-24 h-24 text-blue-300 mb-4 animate-bounce"/>
+                    <h1 className="text-4xl font-bold text-white">YOU ARE DEAD</h1>
+                    <p className="text-slate-400 mt-2">You are now a Ghost.</p>
+                  </>
+              ) : (
+                  <>
+                    <h1 className="text-3xl font-bold text-white mb-2">YOU SURVIVED</h1>
+                    <p className="text-slate-500">Check TV for victim.</p>
+                  </>
+              )}
+          </div>
+      );
+  }
+
+  // WEAPON DEDUCTION
+  if(gameState.status === 'weapon_clues') {
+      // Active role logic
+      if(playerState.isMurderer) {
+          return (
+              <div className="p-6 h-full flex flex-col justify-center">
+                  <div className="text-center mb-6">
+                      <div className="text-red-500 font-bold uppercase tracking-widest text-xs">YOUR WEAPON</div>
+                      <div className="text-4xl font-black text-white">{gameState.murderWeapon}</div>
+                  </div>
+                  <input className="w-full bg-slate-800 p-4 rounded mb-4 text-white" placeholder="One word clue..." onChange={e=>setWeaponClue(e.target.value)}/>
+                  <button onClick={submitWeaponClue} className="w-full bg-red-600 py-4 rounded font-bold">SEND CLUE</button>
+              </div>
+          );
+      }
+      if(playerState.isGhost) {
+           // Ghost waits for Murderer clue (simulated by wait, or if we had sequential rounds. Here simultaneous for speed, or wait if needed. Let's do simultaneous for simplicity or wait for game state update?
+           // The prompt said: Murderer submits -> Ghost sees -> Ghost submits.
+           // To keep it simple in one screen: Both submit, we reveal both. Or if we want strict seq:
+           // We'll let Ghost submit a clue about the weapon they see too.
+           return (
+              <div className="p-6 h-full flex flex-col justify-center">
+                  <div className="text-center mb-6">
+                      <div className="text-blue-300 font-bold uppercase tracking-widest text-xs">THE WEAPON</div>
+                      <div className="text-4xl font-black text-white">{gameState.murderWeapon}</div>
+                  </div>
+                  <input className="w-full bg-slate-800 p-4 rounded mb-4 text-white" placeholder="One word clue..." onChange={e=>setWeaponClue(e.target.value)}/>
+                  <button onClick={submitWeaponClue} className="w-full bg-blue-600 py-4 rounded font-bold">SEND GHOST CLUE</button>
+              </div>
+          );
+      }
+      // Innocents busy work
+      return (
+          <div className="p-6 h-full flex flex-col justify-center">
+              <h2 className="text-xl font-bold mb-4">JOURNAL ENTRY</h2>
+              <p className="text-slate-400 text-sm mb-4">Record your thoughts to stay busy.</p>
+              <textarea className="w-full h-32 bg-slate-800 text-white p-3 rounded outline-none" value={busyWork} onChange={e=>setBusyWork(e.target.value)} />
+              <button onClick={()=>setBusyWork("")} className="w-full bg-slate-700 py-3 rounded mt-4 font-bold">SAVE ENTRY</button>
+          </div>
+      );
   }
 
   // FINAL VOTING
@@ -898,9 +907,15 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
         <h2 className="text-xl font-bold mb-4 text-red-500">FINAL VOTE</h2>
         <p className="text-xs uppercase text-slate-400 mb-2">Select Killer</p>
         <div className="grid grid-cols-2 gap-2 mb-6">{gameState.players.map(p=><button key={p.uid} onClick={()=>setVote({...vote, suspect: p.uid})} className={`p-4 rounded border ${vote.suspect===p.uid?'bg-red-600':'bg-slate-800'} flex flex-col items-center`}>{mugshots[p.uid] && <img src={mugshots[p.uid]} className="w-16 h-16 rounded-full mb-1 object-cover"/>}{p.name}</button>)}</div>
-        <p className="text-xs uppercase text-slate-400 mb-2">Select Weapon</p>
-        <div className="grid grid-cols-2 gap-2 mb-6">{gameState.possibleWeapons.map(w=><button key={w} onClick={()=>setVote({...vote, weapon: w})} className={`p-3 rounded border text-xs ${vote.weapon===w?'bg-blue-600':'bg-slate-800'}`}>{w}</button>)}</div>
-        <button disabled={!vote.suspect || !vote.weapon} onClick={()=>send({ finalVote: vote })} className="w-full bg-white text-black py-5 rounded font-bold disabled:opacity-50 fixed bottom-4 left-4 right-4 max-w-[calc(100%-2rem)] mx-auto">CAST VOTE</button>
+        
+        {!playerState.isGhost && (
+            <>
+            <p className="text-xs uppercase text-slate-400 mb-2">Select Weapon</p>
+            <div className="grid grid-cols-2 gap-2 mb-6">{gameState.possibleWeapons.map(w=><button key={w} onClick={()=>setVote({...vote, weapon: w})} className={`p-3 rounded border text-xs ${vote.weapon===w?'bg-blue-600':'bg-slate-800'}`}>{w}</button>)}</div>
+            </>
+        )}
+        
+        <button disabled={!vote.suspect || (!playerState.isGhost && !vote.weapon)} onClick={()=>send({ finalVote: vote })} className="w-full bg-white text-black py-5 rounded font-bold disabled:opacity-50 fixed bottom-4 left-4 right-4 max-w-[calc(100%-2rem)] mx-auto">CAST VOTE</button>
       </div>
     );
   }
