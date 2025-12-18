@@ -45,64 +45,9 @@ const db = getFirestore(app);
 const appId = "murder-at-the-cabin";
 
 /* -----------------------------------------------------------------------
-  AUDIO & VISUAL UTILITIES
+  UTILITIES
   -----------------------------------------------------------------------
 */
-
-const playDistortedAudio = async (url) => {
-  try {
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioContext();
-    
-    if (audioCtx.state === 'suspended') {
-      await audioCtx.resume();
-    }
-    
-    const response = await fetch(url);
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-
-    const source = audioCtx.createBufferSource();
-    source.buffer = audioBuffer;
-
-    // Pitch shift (0.8 = deeper voice)
-    source.playbackRate.value = 0.8; 
-
-    // Ring Modulator (Robotic/Metallic Effect)
-    const oscillator = audioCtx.createOscillator();
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 30; 
-    
-    const dryGain = audioCtx.createGain();
-    const wetGain = audioCtx.createGain();
-    const effectGain = audioCtx.createGain();
-
-    dryGain.gain.value = 0.3; 
-    wetGain.gain.value = 0.7; 
-
-    source.connect(dryGain);
-    dryGain.connect(audioCtx.destination);
-
-    source.connect(effectGain);
-    oscillator.connect(effectGain.gain);
-    effectGain.connect(wetGain);
-    wetGain.connect(audioCtx.destination);
-
-    oscillator.start();
-    source.start();
-    
-    return new Promise((resolve) => {
-      source.onended = () => {
-        oscillator.stop();
-        audioCtx.close();
-        resolve();
-      };
-    });
-  } catch (e) {
-    console.error("Audio distortion failed", e);
-  }
-};
-
 const resizeImage = (file, maxWidth = 300) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -180,6 +125,49 @@ const Timer = ({ duration, onComplete, label = "TIME REMAINING" }) => {
       <div className={`text-4xl font-mono font-bold px-6 py-2 rounded-lg border-2 bg-black/80 backdrop-blur-md ${timeLeft < 10 ? 'text-red-500 border-red-500 animate-pulse' : 'text-slate-200 border-slate-700'}`}>
         {Math.floor(timeLeft / 60)}:{(timeLeft % 60).toString().padStart(2, '0')}
       </div>
+    </div>
+  );
+};
+
+const AudioRecorder = ({ onSave, label }) => {
+  const [recording, setRecording] = useState(false);
+  const [audioData, setAudioData] = useState(null);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
+
+  const startRecording = async (e) => {
+    if (e) e.preventDefault();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      chunksRef.current = [];
+      
+      mediaRecorderRef.current.ondataavailable = (e) => chunksRef.current.push(e.data);
+      mediaRecorderRef.current.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = () => { setAudioData(reader.result); onSave(reader.result); };
+      };
+      mediaRecorderRef.current.start();
+      setRecording(true);
+      setTimeout(() => { if (mediaRecorderRef.current?.state === 'recording') stopRecording(); }, 10000);
+    } catch (err) { console.error("Mic Error:", err); }
+  };
+  const stopRecording = (e) => { if (e) e.preventDefault(); if (mediaRecorderRef.current?.state === 'recording') { mediaRecorderRef.current.stop(); setRecording(false); } };
+
+  return (
+    <div className="flex flex-col items-center gap-2 p-4 bg-slate-800 rounded-lg border border-slate-700 w-full shadow-lg">
+      <div className="text-xs uppercase text-slate-400 font-bold tracking-wider">{label}</div>
+      {!audioData ? (
+        <button onMouseDown={startRecording} onMouseUp={stopRecording} onTouchStart={startRecording} onTouchEnd={stopRecording} className={`w-20 h-20 rounded-full flex items-center justify-center transition-all ${recording ? 'bg-red-600 scale-110 shadow-[0_0_25px_rgba(220,38,38,0.8)]' : 'bg-slate-600 hover:bg-slate-500'}`}><Mic className="w-8 h-8 text-white" /></button>
+      ) : (
+        <div className="flex flex-col items-center animate-in">
+          <div className="w-20 h-20 rounded-full bg-green-900 border-2 border-green-500 flex items-center justify-center mb-2"><CheckCircle className="w-8 h-8 text-green-400" /></div>
+          <button onClick={() => setAudioData(null)} className="text-xs text-slate-400 underline hover:text-white">Record Again</button>
+        </div>
+      )}
+      <div className="text-xs text-slate-500 mt-1 font-mono">{recording ? <span className="text-red-400 animate-pulse">RECORDING... (10s MAX)</span> : "HOLD TO RECORD"}</div>
     </div>
   );
 };
@@ -286,7 +274,7 @@ export default function App() {
   // Music & SFX Logic
   useEffect(() => {
     if (!audioRef.current || view !== 'host') return;
-    const isPlayingMedia = gameState?.status === 'intro';
+    const isPlayingMedia = gameState?.status === 'intro' || gameState?.status === 'briefing';
     
     if (isPlayingMedia) {
         audioRef.current.pause(); 
@@ -413,22 +401,9 @@ const HostView = ({ gameId, gameState }) => {
   const [mugshots, setMugshots] = useState({});
   const advance = (s, d={}) => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'games', gameId), { status: s, roundStartedAt: Date.now(), ...d });
 
-  // Fetch Mugshots for display
+  // Fetch Mugshots including in Lobby for immediate update
   useEffect(() => {
-    const fetchMugshots = async () => {
-        const ms = {};
-        for(const p of gameState.players) {
-            const d = await getDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${p.uid}`));
-            if(d.exists() && d.data().dossier?.mugshot) ms[p.uid] = d.data().dossier.mugshot;
-        }
-        setMugshots(ms);
-    };
-    if (['lobby', 'round1_suspect', 'reveal', 'voting'].includes(gameState.status)) fetchMugshots();
-  }, [gameState.status, gameState.players]);
-
-  // Use Interval to keep lobby mugshots fresh
-  useEffect(() => {
-      if(gameState.status === 'lobby') {
+      if(gameState.status === 'lobby' || ['round1_suspect', 'reveal', 'voting'].includes(gameState.status)) {
           const i = setInterval(async () => {
               const ms = {};
               for(const p of gameState.players) {
@@ -453,9 +428,11 @@ const HostView = ({ gameId, gameState }) => {
       if (gameState.status === 'round1_suspect' && data.every(p => p?.r1Suspect)) advance('round1_weapon');
       if (gameState.status === 'round1_weapon' && data.every(p => p?.r1Weapon)) calculateR1Stats();
       if (gameState.status === 'round2' && data.every(p => p?.sketch)) setupLineup();
+      // Lineup Auto-Advance
       if (gameState.status === 'lineup' && data.every(p => p?.sketchVote)) handleRound2Winner();
       if (gameState.status === 'round4_exchange' && data.every(p => p?.finishedExchange)) advance('round4_debate');
       
+      // KILLING ROUND - EXPLICIT CHECK FOR MURDERER
       if (gameState.status === 'killing_round') {
           const mData = data.find(p => p.isMurderer);
           if (mData && mData.victimChoice) handleMurder();
@@ -539,6 +516,7 @@ const HostView = ({ gameId, gameState }) => {
     
     const innocents = gameState.players.filter(p => p.uid !== gameState.murdererId && p.uid !== winnerId);
     let clueText = "Trust your instincts.";
+    
     if (innocents.length > 0) {
         const revealedInnocent = innocents[Math.floor(Math.random() * innocents.length)];
         clueText = `${revealedInnocent.name} is INNOCENT.`;
@@ -635,7 +613,9 @@ const HostView = ({ gameId, gameState }) => {
   // --- RENDER HOST VIEWS ---
   if(gameState.status === 'lobby') return <div className="h-full flex flex-col items-center justify-center relative z-20 text-center"><h1 className="text-8xl font-black text-red-600 mb-4 drop-shadow-lg">LOBBY</h1><div className="text-4xl text-white mb-8 font-mono">{gameId}</div><div className="grid grid-cols-4 gap-6 w-full max-w-6xl">{gameState.players.map(p => <div key={p.uid} className="bg-slate-800 p-6 rounded-xl text-3xl font-bold border-2 border-slate-600 text-center flex flex-col items-center gap-2">{mugshots[p.uid] && <img src={mugshots[p.uid]} className="w-24 h-24 rounded-full object-cover border-2 border-slate-500"/>}{p.name}</div>)}</div>{gameState.players.length > 0 && <button onClick={startGame} className="mt-12 bg-red-600 px-16 py-6 text-4xl font-black rounded-full shadow-lg">START NIGHT</button>}</div>;
 
-  if(gameState.status === 'intro') return <div className="h-full w-full bg-black relative z-50"><video src="/intro.mp4" autoPlay className="w-full h-full object-contain" onEnded={()=>advance('brainstorm')} /><button onClick={()=>advance('brainstorm')} className="absolute top-4 right-4 bg-slate-800 text-white px-6 py-2 rounded-full font-bold border border-slate-600 z-50">SKIP VIDEO</button></div>;
+  if(gameState.status === 'intro') return <div className="h-full w-full bg-black relative z-50"><video src="/intro.mp4" autoPlay className="w-full h-full object-contain" onEnded={()=>advance('briefing')} /><button onClick={()=>advance('briefing')} className="absolute top-4 right-4 bg-slate-800 text-white px-6 py-2 rounded-full font-bold border border-slate-600 z-50">SKIP VIDEO</button></div>;
+
+  if(gameState.status === 'briefing') return <div className="h-full w-full bg-black relative z-50"><video src="/briefing.mp4" autoPlay className="w-full h-full object-contain" onEnded={()=>advance('brainstorm')} /></div>;
 
   if(gameState.status === 'brainstorm') return <div className="h-full flex flex-col items-center justify-center relative z-20"><h2 className="text-6xl font-bold mb-8">THE ARMORY</h2><p className="text-2xl text-slate-400 mb-8">Detectives are identifying potential weapons...</p><Timer duration={60} onComplete={finishBrainstorm}/></div>;
 
@@ -879,9 +859,6 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
   if(gameState.status === 'round4_exchange') {
       const currentCard = playerState.hand && playerState.hand[cardIdx];
       if(!currentCard) return <div className="h-full flex items-center justify-center text-slate-500">Waiting for cards...</div>;
-      
-      const isVerified = !playerState.isMurderer && (rumorNote.replace(/\s+/g, ' ').trim().toLowerCase() === currentCard.text.replace(/\s+/g, ' ').trim().toLowerCase());
-
       return (
         <div className="p-6 h-full flex flex-col relative z-30 overflow-y-auto">
             <h2 className="text-center font-bold text-white mb-4">RUMOR MILL</h2>
@@ -896,9 +873,9 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
                     <textarea className="w-full h-24 bg-slate-800 text-white p-3 rounded border border-red-500/50 focus:border-red-500 outline-none" value={rumorEdit} onChange={e=>setRumorEdit(e.target.value)} placeholder="Rewrite this rumor..." />
                 </div>
             ) : (
-                <div className={`mb-4 p-4 border rounded ${isVerified ? 'border-green-500 bg-green-900/20' : 'border-blue-500 bg-slate-800'}`}>
-                     <p className={`${isVerified ? 'text-green-400' : 'text-blue-400'} font-bold text-xs uppercase mb-2`}>{isVerified ? "VERIFIED!" : "VERIFY (RETYPE EXACTLY):"}</p>
-                     <textarea className="w-full h-24 bg-transparent text-white p-2 outline-none" value={rumorNote} onChange={e=>setRumorNote(e.target.value)} placeholder="Type original rumor here..." />
+                <div className="mb-4">
+                     <p className="text-blue-400 font-bold text-xs uppercase mb-2">VERIFY (RETYPE EXACTLY):</p>
+                     <textarea className="w-full h-24 bg-slate-800 text-white p-3 rounded border border-blue-500/50 focus:border-blue-500 outline-none" value={rumorNote} onChange={e=>setRumorNote(e.target.value)} placeholder="Type original rumor here..." />
                 </div>
             )}
 
@@ -907,9 +884,9 @@ const PlayerView = ({ gameId, gameState, playerState, user }) => {
                {gameState.players.filter(p=>p.uid!==user.uid).map(p=><option key={p.uid} value={p.uid}>{p.name}</option>)}
             </select>
 
-            <button disabled={!targetId || (playerState.isMurderer ? !rumorEdit : !isVerified)} onClick={async ()=>{
-                const txt = playerState.isMurderer ? rumorEdit : rumorNote;
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${targetId}`), { inbox: arrayUnion({ text: txt, fromName: playerState.name }) });
+            <button disabled={!targetId || (playerState.isMurderer ? !rumorEdit : rumorNote.trim().toLowerCase() !== currentCard.text.trim().toLowerCase())} onClick={async ()=>{
+                const txt = playerState.isMurderer ? rumorEdit : currentCard.text;
+                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'players', `${gameId}_${targetId}`), { inbox: arrayUnion({ text: txt, fromName: user.name }) });
                 setRumorEdit(""); setRumorNote(""); setTargetId("");
                 if(cardIdx===0) setCardIdx(1); else send({finishedExchange:true});
             }} className="w-full bg-blue-600 py-4 rounded-xl font-bold disabled:opacity-50 shadow-lg text-lg">SEND</button>
